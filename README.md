@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="Escriba Logo" width="200">
+</p>
+
 # Escriba
 
 Script **Python** de alta resiliência para baixar legendas (automáticas ou manuais) e metadados de todos os vídeos de um canal do YouTube de forma sequencial e controlada.
