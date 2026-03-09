@@ -22,19 +22,19 @@ Diferente de simples scripts de download, o Escriba atua como um **Escriba Digit
 
 ## ⚡ Funcionalidades de Elite
 
-*   **⚡️ Mapeamento JSON Híbrido**: Descoberta ultrarrápida via `--flat-playlist` com fallback inteligente de metadados.
-*   **🛠️ Auto-Healing de Autenticação**: Detecta cookies inválidos on-the-fly, regenera o cache e continua o download sem interrupções.
+*   **⚡️ Mapeamento JSON Híbrido**: Leitura ultrarrápida de lista de videos do canal/playlist com fallback inteligente de metadados.
+*   **🛠️ Auto-Healing de Autenticação**: Detecta cookies inválidos, regenera o cache e continua o download sem interrupções.
 *   **🧠 Motor de NLP Avançado**: Pipeline de 6 fases para limpeza de ruído, deduplicação de "muletas" orais e ancoragem temporal.
-*   **📁 State Machine Atômica**: Banco de dados JSON centralizado que garante sincronização incremental perfeita (nunca baixa o mesmo vídeo duas vezes).
+*   **📁 State Machine Atômica**: Banco de dados centralizado para o canal que garante sincronização incremental perfeita (nunca baixa o mesmo vídeo duas vezes).
 *   **🎙️ Fallback de Áudio**: Se o vídeo não possui legendas, o Escriba extrai o áudio bruto (`.mp3`/`.m4a`) para processamento externo.
 
 ---
 
-## 🚀 Instalação Rápida
+## 🚀 Instalação
 
 O Escriba é otimizado para **macOS**, mas roda perfeitamente em Linux e Windows.
 
-### Configuração Inicial (Unix/macOS)
+### Configuração (Unix/macOS)
 
 ```bash
 # 1. Clone e acesse o diretório
@@ -50,9 +50,26 @@ echo 'alias escriba="'$(pwd)'/.venv/bin/python3 '$(pwd)'/escriba.py"' >> ~/.zshr
 source ~/.zshrc
 ```
 
+### Configuração (Windows)
+
+```powershell
+# 1. Clone e acesse o diretório
+cd escriba
+
+# 2. Crie e prepare o ambiente virtual
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install yt-dlp python-dotenv scikit-learn nltk numpy pysrt
+
+# 3. Crie o comando global (Opcional - PowerShell)
+# Execute para adicionar o alias ao seu perfil do PowerShell
+$EscribaDir = Get-Location
+Add-Content -Path $PROFILE -Value "function escriba { & '$EscribaDir\.venv\Scripts\python.exe' '$EscribaDir\escriba.py' `$args }"
+```
+
 ---
 
-## 🛠️ Como Operar (Exemplos)
+## 🛠️ Como Operar
 
 O Escriba aceita Handles (`@Canal`), URLs completas ou IDs de vídeos únicos.
 
@@ -73,10 +90,10 @@ escriba --regen-md
 ### Flags de Poder
 | Opção | Propósito |
 |---|---|
-| `-l, --lang` | Força o idioma (ex: `pt`, `en`). |
+| `-l, --lang` | Força o idioma (ex: `pt`, `en`) caso haja alguma falha na detecção automática. |
 | `--audio-fallback`| Baixa o áudio caso não existam legendas disponíveis. |
 | `-rc, --refresh` | Purga o cache de cookies e extrai novos do Chrome. |
-| `-f, --fast` | **Modo Turbo**: Remove o delay humano entre requisições. |
+| `-f, --fast` | **Modo Turbo**: Remove o delay entre requisições. O delay foi implementado para evitar bloqueios do YouTube. |
 | `--no-md` | Pula o motor de IA e preserva apenas o arquivo bruto. |
 
 ---

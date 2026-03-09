@@ -38,9 +38,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass
+from typing import Optional
 from dotenv import load_dotenv
+import requests
 
-VERSION = "2.2.0"
+VERSION = "2.4.0"
+
+def clean_ekklezia_terms(text: str) -> str:
+    """Aplica as regras de substituição de termos da Ekklezia em todas as produções de texto."""
+    if not text: return text
+    text = text.replace("Sete Montanhas", "Sete Montes")
+    text = text.replace("Ecclesia", "Ekklezia")
+    return text
 
 
 @dataclass
@@ -162,11 +171,15 @@ def setup_environment() -> tuple[Path, list[str]]:
       - yt_dlp_cmd_list: comando base para invocar o yt-dlp (python do venv + -m yt_dlp)
     """
     script_dir_path = Path(__file__).parent.resolve()
-    python_executable_path = script_dir_path / ".venv" / "bin" / "python3"
+    # Descoberta do executável Python no ambiente virtual (Cross-platform)
+    if os.name == "nt":
+        python_executable_path = script_dir_path / ".venv" / "Scripts" / "python.exe"
+    else:
+        python_executable_path = script_dir_path / ".venv" / "bin" / "python3"
 
-    if not python_executable_path.is_file() or not os.access(python_executable_path, os.X_OK):
+    if not python_executable_path.is_file():
         print_err(f"Ambiente virtual não encontrado em {python_executable_path}")
-        print_info("Execute a instalação das dependências no diretório do script.")
+        print_info("Certifique-se de que a pasta .venv/ existe e as dependências foram instaladas.")
         sys.exit(1)
 
     yt_dlp_cmd_list = [
@@ -453,69 +466,105 @@ def load_or_create_channel_state(
     cookie_args_list: list[str], 
     channel_url: str
 ) -> tuple[Path | None, list[dict]]:
-    """Carrega o banco de dados JSON do canal. Se não encontrado, mapeia o canal e gera on-the-fly."""
-    
+    """
+    Carrega o banco de dados JSON do canal.
+    Tenta priorizar o 'JSON corrente' na pasta para evitar duplicatas (user request).
+    """
     channel_name_safe = None
-    match = re.search(r"@([A-Za-z0-9_-]+)", channel_url)
-    if match:
-        channel_name_safe = match.group(1)
-        
-    latest_json_path = get_latest_json_path(cwd_path, channel_name_safe)
-    is_legacy_format = False
-    raw_data_list = []
+    identifier = ""
     
-    if latest_json_path:
-        print_info(f"Usando JSON state database: {BOLD}{latest_json_path.name}{RESET}")
+    # Extração de identificador (Handle ou ID de Playlist ou ID de Vídeo)
+    if "@" in channel_url:
+        match = re.search(r"@([A-Za-z0-9_-]+)", channel_url)
+        channel_name_safe = match.group(1) if match else "canal"
+    elif "list=" in channel_url:
+        match = re.search(r"list=([A-Za-z0-9_-]+)", channel_url)
+        identifier = match.group(1) if match else "playlist"
+        channel_name_safe = f"playlist_{identifier}"
+    elif "watch?v=" in channel_url or "youtu.be/" in channel_url:
+        match = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", channel_url)
+        identifier = match.group(1) if match else "video"
+        channel_name_safe = f"video_{identifier}"
+    else:
+        channel_name_safe = "canal"
+
+    # Seleção inteligente do JSON: se houver apenas um escriba_*.json na pasta, usa ele como corrente.
+    json_path = None
+    existing_jsons = list(cwd_path.glob("escriba_*.json"))
+    if not existing_jsons:
+        existing_jsons = list(cwd_path.glob("lista_*.json"))
+        
+    if len(existing_jsons) == 1:
+        json_path = existing_jsons[0]
+        print_info(f"Usando JSON corrente detectado: {BOLD}{json_path.name}{RESET}")
+    elif len(existing_jsons) > 1:
+        # Tenta achar um que bata com o canal atual
+        for ej in existing_jsons:
+            if channel_name_safe in ej.name:
+                json_path = ej
+                break
+        if not json_path:
+            # Pega o mais recente como fallback
+            json_path = Path(max([str(j) for j in existing_jsons], key=os.path.getmtime))
+            print_info(f"Sincronizando com JSON mais recente: {BOLD}{json_path.name}{RESET}")
+    else:
+        json_path = cwd_path / f"escriba_{channel_name_safe}.json"
+
+    history_data_list = []
+    
+    # 1. Tenta carregar o histórico existente
+    if json_path.exists():
         try:
-            with open(latest_json_path, "r", encoding="utf-8") as file_descriptor:
+            with open(json_path, "r", encoding="utf-8") as file_descriptor:
                 json_data = json.load(file_descriptor)
-                
-                # Suporta o novo formato (dict com channel e videos) e o formato legado (list puro)
                 if isinstance(json_data, dict) and "videos" in json_data:
-                    raw_data_list = json_data["videos"]
+                    history_data_list = json_data["videos"]
                 else:
-                    raw_data_list = json_data
-                    is_legacy_format = True
-                    
-                # Migração on-the-fly para o novo schema, suportando listas antigas
-                for item in raw_data_list:
-                    if "subtitle_downloaded" not in item:
-                        item["subtitle_downloaded"] = False
-                    if "video_id" not in item and "id" in item:
-                        item["video_id"] = item.pop("id")
-                    if "publish_date" not in item and "date" in item:
-                        item["publish_date"] = item.pop("date")
-                    if "info_downloaded" not in item:
-                        item["info_downloaded"] = False
-                    if "has_no_subtitle" not in item:
-                        item["has_no_subtitle"] = False
-        except Exception as error_msg:
-            print_warn(f"Erro ao ler JSON de estado: {error_msg}")
+                    history_data_list = json_data
+        except Exception as e:
+            print_warn(f"Falha ao carregar histórico: {e}")
+
+    # Indexar o histórico por video_id para busca rápida
+    history_map = {v.get("video_id") or v.get("id"): v for v in history_data_list}
+
+    # 2. Buscar os vídeos da URL atual
+    current_videos_list = generate_fast_list_json(yt_dlp_cmd_list, cookie_args_list, channel_url)
+    if not current_videos_list and not json_path.exists():
+        return None, []
+
+    # 3. Merge: vídeos da playlist atual + informações de estado do histórico
+    merged_state_list = []
+    new_videos_count = 0
+    
+    playlist_ctx = identifier if "list=" in channel_url else None
+
+    for vid_entry in current_videos_list:
+        vid_id = vid_entry["video_id"]
+        if vid_id in history_map:
+            # Preservar o estado do histórico
+            existing_entry = history_map[vid_id]
             
-    # Arquivo não existe ou erro. Cria on-the-fly:
-    if not latest_json_path:
-        print_info(f"State JSON {BOLD}não detectado{RESET}. Criando infraestrutura e cache de alta velocidade...")
-        
-        if not channel_name_safe:
-            channel_name_safe = "canal"
-             
-        latest_json_path = cwd_path / f"escriba_{channel_name_safe}.json"
-        raw_data_list = generate_fast_list_json(yt_dlp_cmd_list, cookie_args_list, channel_url)
-        
-        if not raw_data_list:
-            return None, []
+            # Garantir campos
+            for field in ["subtitle_downloaded", "info_downloaded", "has_no_subtitle"]:
+                if field not in existing_entry: existing_entry[field] = False
+            
+            # Adicionar playlist se não constar
+            if playlist_ctx:
+                if "playlists" not in existing_entry: existing_entry["playlists"] = []
+                if playlist_ctx not in existing_entry["playlists"]:
+                    existing_entry["playlists"].append(playlist_ctx)
+            
+            merged_state_list.append(existing_entry)
+        else:
+            if playlist_ctx: vid_entry["playlists"] = [playlist_ctx]
+            merged_state_list.append(vid_entry)
+            new_videos_count += 1
 
-    # Aqui independente se carregou do disco ou acabou de gerar: executa a auto-migração
-    was_migrated = auto_migrate_legacy_files(cwd_path, raw_data_list)
-    if is_legacy_format or (latest_json_path and latest_json_path.name.startswith("lista_")):
-        was_migrated = True
+    if new_videos_count > 0:
+        print_ok(f"Descobertos {BOLD}{new_videos_count}{RESET} novos vídeos na URL alvo.")
 
-    if not latest_json_path.exists() or was_migrated:
-        save_channel_state_json(latest_json_path, raw_data_list)
-        if not latest_json_path.exists():
-            print_ok(f"State database gravado em: {BOLD}{latest_json_path.name}{RESET}")
-
-    return latest_json_path, raw_data_list
+    save_channel_state_json(json_path, merged_state_list)
+    return json_path, merged_state_list
 
 
 def save_channel_state_json(json_path: Path | None, state_list: list[dict], channel_handle: str | None = None):
@@ -1025,7 +1074,7 @@ def srt_to_md(
             if text:
                 first_char = text[0].upper()
                 text = first_char + text[1:]
-                out.append(f"[{para_ts}] {text}\n\n")
+                out.append(f"[{para_ts}] {clean_ekklezia_terms(text)}\n\n")
 
         md_lines.append("### Transcrição Estruturada\n")
         md_lines.append("> **Nota do Sistema:** Transcrição limpa via Escriba.\n\n")
@@ -1237,6 +1286,12 @@ def parse_args() -> argparse.Namespace:
                         help="Exporta legendas em .md segmentado por IA via TF-IDF (Padrão: Ativo)")
     cli_parser.add_argument("--no-md", action="store_false", dest="md",
                         help="Desativa a exportação em .md")
+    cli_parser.add_argument("-n", "--notion", action="store_true",
+                        help="Ativa o upload automático das páginas .md para o Notion")
+    cli_parser.add_argument("--notion-db", default="fcc67a22-df9c-466c-8670-1d508e4bb35b",
+                        help="ID do banco de dados do Notion (padrão: Controle de Leitura)")
+    cli_parser.add_argument("--notion-file", default=None, metavar="PATH",
+                        help="Envia um arquivo .md específico para o Notion e encerra o script")
     cli_parser.add_argument("--keep-srt", action="store_true",
                         help="Mantém o arquivo .srt no disco após a conversão para .md")
     cli_parser.add_argument("--audio-fallback", action="store_true",
@@ -1394,9 +1449,11 @@ def process_videos(
     """
     # Detectar se é vídeo avulso
     _, input_type_string, single_video_id = parse_input_type(session_config.channel_input_url_or_handle)
+    is_single_video_mode = False
 
     if input_type_string == "video" and single_video_id:
         print_section("Vídeo Avulso")
+        is_single_video_mode = True
         json_state_path = None
         full_state_list = None
         working_state_list = [{"video_id": single_video_id, "publish_date": "N/A", "title": "Avulso", "subtitle_downloaded": False}]
@@ -1625,7 +1682,27 @@ def process_videos(
             
             print_dl(f"{vid_id}{RESET}  {DIM}gerando Cluster MD{RESET}", "  ")
             md_path = srt_to_md(srt_path, vid_id, vid_title, video_date=vid_date, threshold=0.3, indentation_prefix="    ")
-            if md_path:
+            
+            # Notion upload: APENAS em modo de vídeo único (user request)
+            if md_path and cli_args.notion:
+                if is_single_video_mode:
+                    notion_token = os.getenv("NOTION_TOKEN")
+                    if notion_token:
+                        print_dl(f"{vid_id}{RESET}  {DIM}enviando p/ Notion{RESET}", "    ")
+                        exporter = NotionExporter(notion_token, cli_args.notion_db)
+                        with open(md_path, "r", encoding="utf-8") as f:
+                            md_content = f.read()
+                        blocks = exporter.md_to_blocks(md_content)
+                        video_url = f"https://www.youtube.com/watch?v={vid_id}"
+                        page_id = exporter.create_page(vid_title, blocks, video_url=video_url)
+                        if page_id:
+                            print_ok(f"Página Notion criada: {DIM}{page_id}{RESET}", "      ")
+                    else:
+                        print_warn("NOTION_TOKEN não encontrado para upload automático.", "      ")
+                else:
+                    print_info(f"Upload para Notion {DIM}ignorado{RESET} (modo canal/playlist ativo).", "    ")
+            
+            elif md_path:
                 print_ok(f"MD clusterizado salvo: {DIM}{md_path.name}{RESET}", "    ")
             
             if not cli_args.keep_srt and srt_path.exists():
@@ -1732,6 +1809,159 @@ def regen_md_from_srt_files() -> None:
     print()
 
 
+
+# ─── Notion Exporter ─────────────────────────────────────────────────────────
+
+class NotionExporter:
+    """Conversor e exportador de Markdown para Notion Blocks com limpeza de termos."""
+    
+    def __init__(self, token: str, database_id: str):
+        self.token = token
+        self.database_id = database_id
+        self.headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+
+    def _clean_text(self, text: str) -> str:
+        """Helper interno para aplicar limpeza de termos em strings do Notion."""
+        return clean_ekklezia_terms(text)
+
+    def _parse_rich_text(self, text: str) -> list[dict]:
+        """Converte markdown simples (bold e code) em blocos de rich text da Notion, com chunking de 2000 chars."""
+        import re
+        parts = []
+        pattern = r'(\*\*.*?\*\*|`.*?`|[^*`]+)'
+        
+        for m in re.findall(pattern, text):
+            if m.startswith('**') and m.endswith('**'):
+                content = self._clean_text(m[2:-2])
+                if not content: continue
+                for i in range(0, len(content), 2000):
+                    parts.append({
+                        "type": "text",
+                        "text": {"content": content[i:i+2000]},
+                        "annotations": {"bold": True}
+                    })
+            elif m.startswith('`') and m.endswith('`'):
+                content = self._clean_text(m[1:-1])
+                if not content: continue
+                for i in range(0, len(content), 2000):
+                    parts.append({
+                        "type": "text",
+                        "text": {"content": content[i:i+2000]},
+                        "annotations": {"code": True}
+                    })
+            else:
+                content = self._clean_text(m)
+                if not content: continue
+                for i in range(0, len(content), 2000):
+                    parts.append({
+                        "type": "text",
+                        "text": {"content": content[i:i+2000]}
+                    })
+        return parts
+
+    def md_to_blocks(self, md_text: str) -> list[dict]:
+        """Converte MD para lista de blocos do Notion."""
+        blocks = []
+        lines = md_text.split('\n')
+        in_code_block = False
+        code_content = []
+        language = "plain text"
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped and not in_code_block: continue
+
+            # Code blocks
+            if stripped.startswith('```'):
+                if in_code_block:
+                    blocks.append({
+                        "object": "block",
+                        "type": "code",
+                        "code": {
+                            "rich_text": [{"type": "text", "text": {"content": '\n'.join(code_content)}}],
+                            "language": language
+                        }
+                    })
+                    in_code_block, code_content = False, []
+                else:
+                    in_code_block = True
+                    lang_map = {"bash": "bash", "python": "python", "json": "json", "md": "markdown"}
+                    language = lang_map.get(stripped[3:].strip(), "plain text")
+                continue
+            
+            if in_code_block:
+                code_content.append(line)
+                continue
+
+            # Headings & List Items
+            if stripped.startswith('# '):
+                blocks.append({"object": "block", "type": "heading_1", "heading_1": {"rich_text": self._parse_rich_text(stripped[2:])}})
+            elif stripped.startswith('## '):
+                blocks.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": self._parse_rich_text(stripped[3:])}})
+            elif stripped.startswith('### '):
+                blocks.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": self._parse_rich_text(stripped[4:])}})
+            elif stripped.startswith(('* ', '- ', '• ')):
+                blocks.append({"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": self._parse_rich_text(stripped[2:])}})
+            elif stripped == '---':
+                blocks.append({"object": "block", "type": "divider", "divider": {}})
+            else:
+                blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": self._parse_rich_text(stripped)}})
+        
+        return blocks
+
+    def create_page(self, title: str, blocks: list[dict], video_url: str = None) -> Optional[str]:
+        """Cria uma página no Notion com propriedades enriquecidas (URL, Status)."""
+        url = "https://api.notion.com/v1/pages"
+        
+        properties = {
+            "Name": {"title": [{"text": {"content": self._clean_text(title) or "Sem Título"}}]}
+        }
+        
+        if video_url:
+            properties["URL"] = {"url": video_url}
+        
+        payload = {
+            "parent": {"database_id": self.database_id},
+            "properties": properties,
+            "children": blocks[:100]  # Limite da Notion API por request
+        }
+        
+        try:
+            response = requests.post(url, headers=self.headers, json=payload)
+            if response.status_code != 200 and response.status_code != 201:
+                error_detail = response.json()
+                print_err(f"Falha ao exportar para Notion: {response.status_code} - {error_detail.get('message', 'Sem detalhes')}")
+                # Se for 400, talvez queiramos ver o payload para debug (opcional, mas útil agora)
+                # print_info(f"Payload enviado: {json.dumps(payload, indent=2)}")
+                return None
+            
+            page_data = response.json()
+            page_id = page_data.get("id")
+            
+            # Se houver mais blocos, faz o patch subsequente
+            if len(blocks) > 100:
+                self._append_remaining_blocks(page_id, blocks[100:])
+                
+            return page_id
+        except Exception as e:
+            print_err(f"Erro inesperado ao exportar para Notion: {e}")
+            return None
+
+    def _append_remaining_blocks(self, page_id: str, remaining_blocks: list[dict]):
+        """Adiciona os blocos excedentes em lotes de 100."""
+        url = f"https://api.notion.com/v1/blocks/{page_id}/children"
+        for i in range(0, len(remaining_blocks), 100):
+            batch = remaining_blocks[i:i+100]
+            try:
+                requests.patch(url, headers=self.headers, json={"children": batch}).raise_for_status()
+            except Exception as e:
+                print_err(f"Erro ao adicionar lote de blocos ao Notion: {e}")
+
+
 def main() -> None:
     cli_args = parse_args()
 
@@ -1740,6 +1970,30 @@ def main() -> None:
         regen_md_from_srt_files()
         return
 
+    # --- Modo de Operação Especial: Notion File ---
+    if cli_args.notion_file:
+        file_path = Path(cli_args.notion_file).resolve()
+        if not file_path.is_file():
+            print_err(f"Arquivo não encontrado: {file_path}")
+            sys.exit(1)
+        
+        notion_token = os.getenv("NOTION_TOKEN")
+        if not notion_token:
+            print_err("NOTION_TOKEN não encontrado no ambiente (.env)")
+            sys.exit(1)
+            
+        print_section("Upload Individual Notion")
+        exporter = NotionExporter(notion_token, cli_args.notion_db)
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        blocks = exporter.md_to_blocks(content)
+        page_id = exporter.create_page(file_path.stem, blocks)
+        if page_id:
+            print_ok(f"Arquivo exportado com sucesso! ID: {page_id}")
+        sys.exit(0)
+
+    # --- Fluxo Normal do Script ---
     session_config = setup_session(cli_args)
     cookie_args_list, language_opt_string = init_auth_and_language(
         session_config, cli_args.lang, cli_args.refresh_cookies
