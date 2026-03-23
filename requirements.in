@@ -1,0 +1,4 @@
+python-dotenv
+requests
+yt-dlp
+urllib3<2.5

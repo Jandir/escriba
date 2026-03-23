@@ -2,6 +2,13 @@
   <img src="logo.png" alt="Escriba Logo" width="220">
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Versão-2.4.2-blue?style=for-the-badge" alt="Versão">
+  <img src="https://img.shields.io/badge/Python-3.13+-ffd343?style=for-the-badge&logo=python&logoColor=black" alt="Python">
+  <img src="https://img.shields.io/badge/Licença-MIT-green?style=for-the-badge" alt="Licença">
+  <img src="https://img.shields.io/badge/Target-NotebookLM-6f42c1?style=for-the-badge&logo=google" alt="NotebookLM">
+</p>
+
 # Escriba
 ### O Orquestrador de Inteligência para YouTube
 
@@ -40,15 +47,38 @@ O Escriba é otimizado para **macOS**, mas roda perfeitamente em Linux e Windows
 # 1. Clone e acesse o diretório
 cd escriba
 
-# 2. Crie e prepare o ambiente virtual
+# 2. Prepare o ambiente (Criação única)
 python3 -m venv .venv
-source .venv/bin/activate
-pip install yt-dlp python-dotenv scikit-learn nltk numpy pysrt
+./.venv/bin/python3 -m pip install -r requirements.txt
 
-# 3. Crie o comando global (Opcional, mas recomendado)
-echo 'alias escriba="'$(pwd)'/.venv/bin/python3 '$(pwd)'/escriba.py"' >> ~/.zshrc
-source ~/.zshrc
+# 3. Use o script diretamente
+# O Escriba agora detecta e usa o .venv automaticamente se estiver na pasta!
+python3 escriba.py @Canal
 ```
+
+> [!TIP]
+> **Auto-Venv**: O script possui lógica interna para se re-executar no ambiente virtual local se detectado, garantindo que todas as dependências estejam sempre corretas sem que você precise ativar o ambiente manualmente.
+
+---
+
+## 🖋️ Customização de Termos (rules.txt)
+
+O Escriba possui um motor de limpeza de termos dinâmico (padrão Ekklezia). Você pode personalizar como palavras específicas são tratadas criando um arquivo `rules.txt`:
+
+1.  **Global**: `/Users/jandirp/scripts/escriba/rules.txt` (regras para todas as execuções).
+2.  **Local**: `./rules.txt` (regras específicas para a pasta/projeto atual).
+
+**Formato do arquivo:**
+```text
+# Comentários são permitidos
+Termo Original, Termo Corrigido
+PalavraAntiga = PalavraNova
+Sete Montanhas, Sete Montes
+Ecclesia, Ekklezia
+```
+As regras locais têm precedência sobre as globais.
+
+---
 
 ### Configuração (Windows)
 

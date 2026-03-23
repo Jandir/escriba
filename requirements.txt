@@ -1,18 +1,34 @@
-pysrt
-scikit-learn
-numpy
-nltk
-python-dotenv
-
-# Dependência principal com extras
-yt-dlp[default,curl-cffi]>=2024.03.10
-
-# Trava de segurança para o macOS Monterey
-# Impede o download da versão 0.14+ que exige compilação avançada
-curl-cffi>=0.5.10,<=0.7.3
-
-# Dependências de suporte (Opcionais, mas recomendadas para evitar avisos)
-certifi>=2024.2.2
-mutagen>=1.47.0
-pycryptodomex>=3.20.0
-websockets>=12.0
+brotli==1.2.0
+certifi==2026.2.25
+cffi==2.0.0
+chardet==7.0.1
+charset-normalizer==3.4.5
+click==8.3.1
+curl-cffi==0.5.10
+idna==3.11
+iniconfig==2.3.0
+joblib==1.5.3
+mutagen==1.47.0
+nltk==3.9.3
+numpy==2.4.2
+packaging==26.0
+pluggy==1.6.0
+pycparser==3.0
+pycryptodomex==3.23.0
+Pygments==2.19.2
+pysrt==1.1.2
+pytest==9.0.2
+python-dotenv==1.2.2
+regex==2026.2.28
+requests==2.32.5
+scikit-learn==1.8.0
+scipy==1.17.1
+setuptools==82.0.0
+threadpoolctl==3.6.0
+tqdm==4.67.3
+typing_extensions==4.15.0
+urllib3==2.4.0
+websockets==16.0
+wheel==0.46.3
+yt-dlp==2026.3.3
+yt-dlp-ejs==0.5.0

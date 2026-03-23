@@ -23,36 +23,86 @@ com nomes reveladores, sem aspas enigmáticas e com sufixos tipados
 =============================================================================
 """
 
+import os
+import sys
+import subprocess
+import warnings
+from pathlib import Path
+
+# ─── Gerenciamento de Ambiente Virtual ───────────────────────────────────────
+# Isso garante que todas as dependências (requests, urllib3, yt-dlp) sejam as do projeto.
+_script_dir = Path(__file__).parent.resolve()
+_venv_bin = _script_dir / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+_venv_python = _venv_bin / ("python.exe" if os.name == "nt" else "python3")
+
+if _venv_python.exists() and Path(sys.executable).resolve() != _venv_python.resolve():
+    try:
+        os.execv(str(_venv_python), [str(_venv_python)] + sys.argv)
+    except Exception:
+        pass # Fallback suave
+
+# Suprime avisos de dependência ANTES de importar o requests
+warnings.filterwarnings("ignore", message=".*urllib3.*")
+warnings.filterwarnings("ignore", message=".*doesn't match a supported version.*")
+
 import argparse
 import glob
 import json
 import re
-import os
 import random
 import shutil
-import subprocess
-import sys
 import time
 import functools
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 from dotenv import load_dotenv
-import warnings
-# Suprime avisos de dependência do requests (comum em venvs com versões desencontradas)
-warnings.filterwarnings("ignore", category=UserWarning, module="requests")
 import requests
+
 from collections import Counter
 
-VERSION = "2.4.0"
+VERSION = "2.4.2"
+
+@functools.lru_cache(None)
+def _load_ekklezia_rules() -> list[tuple[str, str]]:
+    """Carrega as regras de substituição do arquivo rules.txt (raiz e corrente)."""
+    # 1. Regras padrão hardcoded
+    rules_dict = {
+        "Sete Montanhas": "Sete Montes",
+        "Ecclesia": "Ekklezia"
+    }
+    
+    # 2. Caminhos dos arquivos
+    global_rules_path = _script_dir / "rules.txt"
+    local_rules_path = Path.cwd() / "rules.txt"
+    
+    for path in [global_rules_path, local_rules_path]:
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"): continue
+                        
+                        # Suporta 'Original,Novo' ou 'Original=Novo'
+                        sep = "," if "," in line else "="
+                        if sep in line:
+                            orig, novo = line.split(sep, 1)
+                            rules_dict[orig.strip()] = novo.strip()
+            except Exception:
+                pass
+    
+    # Retorna lista de tuplas para iteração (estável para substituições múltiplas)
+    return list(rules_dict.items())
+
 
 def clean_ekklezia_terms(text: str) -> str:
-    """Aplica as regras de substituição de termos da Ekklezia em todas as produções de texto."""
+    """Aplica as regras de substituição de termos lidas de rules.txt."""
     if not text: return text
-    text = text.replace("Sete Montanhas", "Sete Montes")
-    text = text.replace("Ecclesia", "Ekklezia")
+    rules_list = _load_ekklezia_rules()
+    for orig, novo in rules_list:
+        text = text.replace(orig, novo)
     return text
 
 
@@ -1570,7 +1620,10 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Baixa legendas de todos os vídeos de um canal ou playlist do YouTube.\n"
             f"Versão: {VERSION}\n\n"
-            "Padrão de nome dos arquivos: [NOME_DA_PASTA]-[ID_VIDEO]-[LANG].srt\n"
+            "Substituições: Aplica regras de limpeza de termos (Ekklezia) usando arquivos\n"
+            "'rules.txt' na pasta raiz do script e/ou na pasta atual (CWD).\n"
+            "Formato: 'Termo Original, Termo Novo' ou 'Original=Novo'.\n\n"
+            "Padrão: [NOME_DA_PASTA]-[ID_VIDEO]-[LANG].srt\n"
             "Vídeos sem legenda são registrados no JSON de estado e ignorados automaticamente."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1655,6 +1708,10 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
         latest_json_path = get_latest_json_path(cwd_path)
         if not latest_json_path:
             print_err("Parâmetro 'canal' não fornecido e nenhum arquivo escriba_*.json encontrado para auto-completar.")
+            print_info(f"{BOLD}Como usar:{RESET}")
+            print_info(f"  python3 escriba.py {BCYAN}@Canal{RESET}")
+            print_info(f"  python3 escriba.py {BCYAN}https://www.youtube.com/playlist?list=...{RESET}")
+            print_info(f"  python3 escriba.py {BCYAN}VIDEO_ID{RESET}")
             sys.exit(1)
             
         try:
