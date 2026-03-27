@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Versão-2.4.2-blue?style=for-the-badge" alt="Versão">
+  <img src="https://img.shields.io/badge/Versão-2.4.4-blue?style=for-the-badge" alt="Versão">
   <img src="https://img.shields.io/badge/Python-3.13+-ffd343?style=for-the-badge&logo=python&logoColor=black" alt="Python">
   <img src="https://img.shields.io/badge/Licença-MIT-green?style=for-the-badge" alt="Licença">
   <img src="https://img.shields.io/badge/Target-NotebookLM-6f42c1?style=for-the-badge&logo=google" alt="NotebookLM">
@@ -29,10 +29,10 @@ Diferente de simples scripts de download, o Escriba atua como um **Escriba Digit
 
 ## ⚡ Funcionalidades de Elite
 
-*   **⚡️ Mapeamento JSON Híbrido**: Leitura ultrarrápida de lista de videos do canal/playlist com fallback inteligente de metadados.
+*   **⚡️ Mapeamento JSON Híbrido**: Leitura ultrarrápida de conteúdo via YouTube-DLP com fallback inteligente e unificação de metadados por pasta.
 *   **🛠️ Auto-Healing de Autenticação**: Detecta cookies inválidos, regenera o cache e continua o download sem interrupções.
 *   **🧠 Motor de NLP Avançado**: Pipeline de 6 fases para limpeza de ruído, deduplicação de "muletas" orais e ancoragem temporal.
-*   **📁 State Machine Atômica**: Banco de dados centralizado para o canal que garante sincronização incremental perfeita (nunca baixa o mesmo vídeo duas vezes).
+*   **📁 Repositório Único Inteligente**: Banco de dados JSON amarrado ao nome da pasta (`escriba_[folder_name].json`), com migração e consolidação automática de bases legadas.
 *   **🎙️ Fallback de Áudio**: Se o vídeo não possui legendas, o Escriba extrai o áudio bruto (`.mp3`/`.m4a`) para processamento externo.
 
 ---
@@ -73,8 +73,8 @@ O Escriba possui um motor de limpeza de termos dinâmico (padrão Ekklezia). Voc
 # Comentários são permitidos
 Termo Original, Termo Corrigido
 PalavraAntiga = PalavraNova
-Sete Montanhas, Sete Montes
-Ecclesia, Ekklezia
+Shabat, Shabbat
+Ceu, Céu
 ```
 As regras locais têm precedência sobre as globais.
 
@@ -138,6 +138,7 @@ O Escriba implementa um pipeline proprietário de **Engenharia de Tópicos** par
 3.  **Cosine Similarity**: Detecta vales de similaridade entre janelas para identificar quebras de tópico.
 4.  **Deduplicação Dinâmica**: Remove o comportamento de "roll-up" (repetição de linhas) das legendas automáticas.
 5.  **Dicionário de Marcadores Orais**: Filtra ruídos como "né", "tipo", "basically" que poluem a semântica.
+6.  **Sanitização Estrutural**: Limpeza automática de artefatos HTML e formatações indesejadas na geração dos arquivos finais.
 
 ---
 

@@ -30,7 +30,10 @@ import warnings
 from pathlib import Path
 
 # ─── Gerenciamento de Ambiente Virtual ───────────────────────────────────────
-# Isso garante que todas as dependências (requests, urllib3, yt-dlp) sejam as do projeto.
+# Quando rodamos o script diretamente (ex: python3 escriba.py), pode ser que o Python
+# usado seja o do sistema, não o do ambiente virtual (.venv). Esse bloco detecta isso
+# e reinicia o script usando o Python correto do venv, garantindo que todas as dependências
+# (requests, urllib3, yt-dlp) sejam as do projeto e não asglobais do sistema.
 _script_dir = Path(__file__).parent.resolve()
 _venv_bin = _script_dir / ".venv" / ("Scripts" if os.name == "nt" else "bin")
 _venv_python = _venv_bin / ("python.exe" if os.name == "nt" else "python3")
@@ -41,9 +44,13 @@ if _venv_python.exists() and Path(sys.executable).resolve() != _venv_python.reso
     except Exception:
         pass # Fallback suave
 
-# Suprime avisos de dependência ANTES de importar o requests
-warnings.filterwarnings("ignore", message=".*urllib3.*")
-warnings.filterwarnings("ignore", message=".*doesn't match a supported version.*")
+# Suprime avisos chatos de dependências (urllib3/requests)
+# Isso evita que warnings do urllib3 poluam a saída do CLI.
+# Aplicamos DEPOIS do re-execução do venv para garantir que funciona após restart.
+import requests.packages.urllib3
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", message="urllib3.*doesn't match a supported")
+warnings.filterwarnings("ignore", message=".*doesn't match a supported version")
 
 import argparse
 import glob
@@ -62,18 +69,26 @@ import requests
 
 from collections import Counter
 
-VERSION = "2.4.2"
+VERSION = "2.4.4"
+
+_script_dir = Path(__file__).parent.resolve()
 
 @functools.lru_cache(None)
 def _load_ekklezia_rules() -> list[tuple[str, str]]:
-    """Carrega as regras de substituição do arquivo rules.txt (raiz e corrente)."""
-    # 1. Regras padrão hardcoded
-    rules_dict = {
-        "Sete Montanhas": "Sete Montes",
-        "Ecclesia": "Ekklezia"
-    }
+    """
+    Carrega as regras de substituição do arquivo rules.txt.
     
-    # 2. Caminhos dos arquivos
+    Esse sistema permite que o usuário defina substituições de termos (ex: "Igreja" → "Ekklezia").
+    Busca em DOIS lugares:
+      1. rules.txt na pasta onde o script está instalado (global)
+      2. rules.txt na pasta onde você está rodando o comando (local)
+    
+    O @lru_cache(None) faz com que essa função seja executada apenas uma vez por processo,
+    evitando ler o arquivo repetidamente a cada chamada - importante para performance.
+    """
+    rules_dict = {}
+    
+    # Caminhos dos arquivos: script_dir = onde o .py está, cwd = onde você executou
     global_rules_path = _script_dir / "rules.txt"
     local_rules_path = Path.cwd() / "rules.txt"
     
@@ -90,20 +105,55 @@ def _load_ekklezia_rules() -> list[tuple[str, str]]:
                         if sep in line:
                             orig, novo = line.split(sep, 1)
                             rules_dict[orig.strip()] = novo.strip()
-            except Exception:
-                pass
+            except Exception as e:
+                print_warn(f"Erro ao ler regras em {path.name}: {e}")
     
-    # Retorna lista de tuplas para iteração (estável para substituições múltiplas)
+    # Retorna lista de tuplas para iteração
     return list(rules_dict.items())
 
 
+@functools.lru_cache(None)
+def _get_ekklezia_regex():
+    """
+    Compila as regras de substituição em uma única expressão regular para performance.
+    
+    Por que regex? Se você tem 100 regras, fazer 100 replace() é O(n*m) - lento.
+    Com regex, fazemos apenas uma passagem: O(n). É uma otimização importante.
+    
+    A ordenação por tamanho decrescente é CRUCIAL: se você tem "casa" e "casamento",
+    precisa checar "casamento" primeiro, senão "casa" faz match parcial errado.
+    Ex: "casa de casamento" → sem ordenação: "casa de casao" (ERRADO!)
+    """
+    rules = _load_ekklezia_rules()
+    if not rules:
+        return None, {}
+    
+    # Escapar chaves para o regex e montar alternância
+    # Ordenar por tamanho decrescente para evitar que 'casa' dê match antes de 'casamento'
+    sorted_rules = sorted(rules, key=lambda x: len(x[0]), reverse=True)
+    pattern = "|".join(re.escape(orig) for orig, _ in sorted_rules)
+    lookup = {orig: novo for orig, novo in sorted_rules}
+    
+    return re.compile(pattern), lookup
+
+
 def clean_ekklezia_terms(text: str) -> str:
-    """Aplica as regras de substituição de termos lidas de rules.txt."""
-    if not text: return text
-    rules_list = _load_ekklezia_rules()
-    for orig, novo in rules_list:
-        text = text.replace(orig, novo)
-    return text
+    """
+    Aplica as regras de substituição de termos usando regex otimizado.
+    
+    O padrão aqui é: regex.sub(callback, texto) - onde o callback recebe o match
+    e retorna o texto de substituição. Isso é mais eficiente que varios str.replace()
+    porque percorre o texto apenas uma vez.
+    """
+    if not text:
+        return text
+        
+    regex, lookup = _get_ekklezia_regex()
+    if not regex:
+        return text
+        
+    # Substituição via callback do regex (O(n) ao invés de O(m*n))
+    return regex.sub(lambda m: lookup[m.group(0)], text)
 
 
 @dataclass
@@ -115,12 +165,14 @@ class SessionConfig:
     yt_dlp_cmd_list: list[str]
     channel_input_url_or_handle: str
     channel_url: str
+    discovered_uploader_id: Optional[str] = None
 
 # Carrega variáveis do .env (localizado no diretório do script)
 load_dotenv(Path(__file__).parent / ".env")
 
-# Node.js path para o js-runtime do yt-dlp
-# Prioridade: variável NODE_PATH do .env → node encontrado no PATH do sistema
+# Node.js path para o js-runtime do yt-dlp.
+# Por que isso? O yt-dlp às vezes precisa de JavaScript para processar certain páginas.
+# Prioridade: variável NODE_PATH do .env (se você definir) → node encontrado no PATH do sistema
 NODE_PATH = os.getenv("NODE_PATH") or shutil.which("node") or ""
 
 # ─── Paleta ANSI ──────────────────────────────────────────────────────────────
@@ -161,7 +213,18 @@ DIV_THICK = f"{BLUE}{'━' * 60}{RESET}"
 
 
 def _print_formatted(icon: str, message: str, indentation_prefix: str = "  ", end_char: str = "\n") -> None:
-    """Print genérico com ícone. indentation_prefix controla a indentação inicial."""
+    """
+    Print genérico com ícone e indentação customizável.
+    
+    Args:
+        icon: Símbole como ✓, ✗, ⚠ para dar feedback visual rápido
+        message: Texto da mensagem
+        indentation_prefix: Espaços antes do ícone (controla o nível de indentação)
+        end_char: Caractere final (padrão é newline)
+    
+    O flush=True é importante para que a mensagem apareça imediatamente,
+    especialmente quando usamos \r (carriage return) para atualizar linhas.
+    """
     print(f"{indentation_prefix} {icon}  {message}", end=end_char, flush=True)
 
 
@@ -197,7 +260,15 @@ def print_header(channel_name: str, script_version: str, execution_mode: str) ->
 
 
 def print_countdown(seconds_count: int, message: str, indentation_prefix: str = "  ") -> None:
-    """Contagem regressiva com barra visual inline."""
+    """
+    Contagem regressiva com barra visual inline.
+    
+    Usa \r (carriage return) para reescrever a mesma linha, criando o efeito de animação.
+    O código \x1b[K no final limpa qualquer texto residual que possa sobrar na linha.
+    
+    Esse "sleep" entre as iterações é importante: além de visual, cria um delay real
+    entre downloads para evitar sobrecarregar o servidor do YouTube (e possíveis bloqueios 429).
+    """
     visual_bar_width = 20
     try:
         for remaining_seconds in range(seconds_count, -1, -1):
@@ -223,9 +294,14 @@ def setup_environment() -> tuple[Path, list[str]]:
     Valida e retorna:
       - script_dir_path: diretório onde este .py está salvo
       - yt_dlp_cmd_list: comando base para invocar o yt-dlp (python do venv + -m yt_dlp)
+    
+    Por que não usar o yt-dlp diretamente? Porque dependendo de como você instalou,
+    pode haver conflitos de versão. Ao usar "python3 -m yt_dlp", garantimos que
+    o yt-dlp do ambiente virtual (.venv) seja usado, não o do sistema.
     """
     script_dir_path = Path(__file__).parent.resolve()
     # Descoberta do executável Python no ambiente virtual (Cross-platform)
+    # Note: "nt" é o nome do OS para Windows, "posix" é para Linux/Mac
     if os.name == "nt":
         python_executable_path = script_dir_path / ".venv" / "Scripts" / "python.exe"
     else:
@@ -249,15 +325,24 @@ def setup_environment() -> tuple[Path, list[str]]:
 
 # ─── Cookies ──────────────────────────────────────────────────────────────────
 
-def configure_cookies(cwd_path: Path, script_dir_path: Path, force_refresh_cookies: bool) -> list[str]:
+def configure_cookies(cwd_path: Path, script_dir_path: Path, force_refresh_cookies: bool, silent: bool = False) -> list[str]:
     """
     Retorna os argumentos de cookie para o yt-dlp.
-    Se force_refresh_cookies=True, apaga o cookies.txt existente na cwd_path antes de continuar.
+    
+    Por que isso é necessário? Muitos vídeos do YouTube exigem idade verificada
+    ou membros. O yt-dlp pode usar cookies do navegador logado para acessar esse conteúdo.
+    
+    O fluxo é:
+    1. Se force_refresh=True → apaga cache antigo e força extração nova
+    2. Se existe cookies.txt válido → usa ele
+    3. Se não → extrai do Chrome automaticamente
+    
+    O argumento "silent" é usado quando não queremos prints (ex: em functions internas).
     """
     cookies_file_path = cwd_path / "cookies.txt"
 
     if force_refresh_cookies:
-        print_warn("--refresh-cookies ativo. Apagando cache antigo...")
+        if not silent: print_warn("--refresh-cookies ativo. Apagando cache antigo...")
         cookies_file_path.unlink(missing_ok=True)
 
     def is_valid_cookie_file(path: Path) -> bool:
@@ -273,26 +358,33 @@ def configure_cookies(cwd_path: Path, script_dir_path: Path, force_refresh_cooki
         return False
 
     if is_valid_cookie_file(cookies_file_path):
-        print_info(f"Cookies em cache: {cookies_file_path.name}")
+        if not silent: print_info(f"Cookies em cache: {cookies_file_path.name}")
         return ["--cookies", str(cookies_file_path)]
     elif cookies_file_path.is_file():
-        print_warn(f"Cache de cookies corrompido detectado e removido: {cookies_file_path.name}")
+        if not silent: print_warn(f"Cache de cookies corrompido detectado e removido: {cookies_file_path.name}")
         cookies_file_path.unlink()
 
     # Fallback: busca no diretório do script
     global_script_cookies_path = script_dir_path / "cookies.txt"
     if global_script_cookies_path.is_file() and not force_refresh_cookies:
-        print_info("Cookies do diretório do script.")
+        if not silent: print_info("Cookies do diretório do script.")
         return ["--cookies", str(global_script_cookies_path)]
 
-    print_warn(f"Extraindo cookies do Chrome → {cookies_file_path.name}")
+    if not silent: print_warn(f"Extraindo cookies do Chrome → {cookies_file_path.name}")
     return ["--cookies-from-browser", "chrome", "--cookies", str(cookies_file_path)]
 
 
 def filter_youtube_cookies(cookies_path: Path) -> None:
     """
     Filtra o arquivo cookies.txt (Netscape) mantendo apenas cookies do YouTube/Google.
-    Remove trackers, extensões e lixos cruzados que o Chrome exporta.
+    
+    Por que filtrar? Quando você exporta cookies do Chrome, ele traz TUDO:
+    - Cookies de cientos de sites (trackers, ads, analytics)
+    - Cookies de extensões
+    - Dados de outros domínios
+    
+    Isso pode causar problemas de autenticação ou arquivo grande.
+    A função mantém apenas domínios relevantes: youtube.com e google.com.
     """
     if not cookies_path.is_file():
         return
@@ -323,8 +415,22 @@ def filter_youtube_cookies(cookies_path: Path) -> None:
 
 def detect_language(yt_dlp_cmd_list: list[str], cookie_args_list: list[str], channel_url: str, cached_lang: str | None = None) -> str:
     """
-    Detecta o idioma predominante do canal. 
-    Se cached_lang for fornecido, usa ele imediatamente (Prioridade Local).
+    Detecta o idioma predominante do canal.
+    
+    Como funciona:
+    1. Primeiro verifica se já temos o idioma salvo no JSON (cached_lang)
+    2. Se não tem cache, baixa metadados de 5 vídeos e conta os idiomas
+    3. Usa o mais comum como idioma do canal
+    4. Se nada for detectado, usa o idioma padrão do .env (DEFAULT_LANGUAGE)
+    
+    A detecção é importante porque cada canal pode ter legendas em idiomas diferentes,
+    e precisamos saber qual pedir ao yt-dlp.
+    
+    Args:
+        yt_dlp_cmd_list: comando base do yt-dlp
+        cookie_args_list: argumentos de cookies (para acessar conteúdo restrito)
+        channel_url: URL do canal/playlist
+        cached_lang: idioma já salvo no JSON (se existir, retorna logo)
     """
     if cached_lang and cached_lang != "N/A":
         print_ok(f"Usando idioma em cache: {BOLD}{cached_lang.strip('^$')}{RESET}")
@@ -400,7 +506,14 @@ def detect_language(yt_dlp_cmd_list: list[str], cookie_args_list: list[str], cha
 # ─── Listagem de IDs e JSON State ───────────────────────────────────────────────
 
 def get_video_exact_date(video_id: str, yt_dlp_cmd_list: list[str], cookie_args_list: list[str]) -> dict:
-    """Extrai a data exata de um único vídeo (usado via ThreadPoolExecutor)."""
+    """
+    Extrai a data exata de um único vídeo.
+    
+    Por que separate? Às vezes o flat-playlist não retorna a data completa,
+    então precisamos fazer uma chamada extra por vídeo quando necessário.
+    
+    Retorna um dict com: id, date (YYYY-MM-DD), title
+    """
     cmd_list = yt_dlp_cmd_list + cookie_args_list + [
         "--dump-json",
         "--skip-download",
@@ -429,16 +542,24 @@ def generate_fast_list_json(
     local_history_map: dict | None = None
 ) -> list[dict]:
     """
-    Novo mecanismo de descoberta de alta velocidade:
+    Descoberta rápida de vídeos do canal.
     
-    Fase 1 — Extrai id, title e upload_date diretamente do stream JSON do 
-             --flat-playlist. Isso evita a necessidade de abrir múltiplos 
-             processos yt-dlp apenas para buscar metadados básicos.
-             Utiliza o `local_history_map` (carregado via load_all_local_history)
-             como cache prioritário para preencher datas ausentes no índice.
+    Maneira antiga: chamava yt-dlp uma vez por vídeo para pegar metadados - MUITO lento.
+    Maneira nova (essa função): usa --flat-playlist que retorna JSON de todos os vídeos
+    em uma única chamada - super rápido!
     
-    Fase 2 — Fallback paralelo (threads) acionado apenas para vídeos onde
-             o campo 'upload_date' estiver ausente tanto no índice quanto no cache local.
+    O fluxo:
+    1. Baixa JSON de todos os vídeos de uma vez (flat-playlist)
+    2. Para cada vídeo, tenta usar a data do índice
+    3. Se não tem data no índice, tenta usar o cache local (history_map)
+    4. Se nenhum dos dois → data fica como "N/A" (será preenchida depois se necessário)
+    
+    Args:
+        yt_dlp_cmd_list: comando base do yt-dlp
+        cookie_args_list: argumentos de cookies
+        channel_url: URL do canal
+        max_workers_count: máximo de threads para fallback (não usado na versão atual)
+        local_history_map: cache local com dados de vídeos já processados anteriormente
     """
     print_info(f"Fase 1: Descoberta de IDs + Metadados ({BOLD}{channel_url}{RESET})...")
     discovery_cmd_list = yt_dlp_cmd_list + cookie_args_list + [
@@ -457,9 +578,15 @@ def generate_fast_list_json(
         for line_content in discovery_process.stdout:
             try:
                 obj = json.loads(line_content.strip())
-                video_id = obj.get("id")
+                video_id = obj.get("id") or obj.get("url")
                 if not video_id:
                     continue
+                
+                # Se for uma URL completa, extrai apenas o ID
+                if "watch?v=" in video_id:
+                    video_id = video_id.split("watch?v=")[-1].split("&")[0]
+                elif video_id.startswith("http"):
+                    video_id = video_id.split("/")[-1]
 
                 title = obj.get("title") or obj.get("fulltitle") or "N/A"
 
@@ -514,30 +641,40 @@ def generate_fast_list_json(
     ]
 
 
-def get_latest_json_path(cwd_path: Path, channel_name_safe: str | None = None) -> Path | None:
-    if channel_name_safe:
-        specific_path = cwd_path / f"escriba_{channel_name_safe}.json"
-        if specific_path.exists():
-            return specific_path
-        specific_path_legacy = cwd_path / f"lista_{channel_name_safe}.json"
-        if specific_path_legacy.exists():
-            return specific_path_legacy
-        return None
-            
-    json_files_list = glob.glob(str(cwd_path / "escriba_*.json"))
-    if not json_files_list:
-        json_files_list = glob.glob(str(cwd_path / "lista_*.json"))
-    if not json_files_list:
-        return None
-    return Path(max(json_files_list, key=os.path.getmtime))
+def get_latest_json_path(cwd_path: Path) -> Path:
+    """
+    Retorna o banco de dados JSON da pasta (escriba_[folder_name].json).
+    Se o oficial não existe, busca versões legadas para auto-detecção.
+    """
+    folder_name = cwd_path.name
+    official_path = cwd_path / f"escriba_{folder_name}.json"
+    if official_path.exists():
+        return official_path
+        
+    # Fallback: buscar arquivos legados mais recentes
+    legacies = sorted(
+        list(cwd_path.glob("escriba_*.json")) + list(cwd_path.glob("lista_*.json")),
+        key=lambda x: x.stat().st_mtime if x.exists() else 0,
+        reverse=True
+    )
+    return legacies[0] if legacies else official_path
 
 def load_all_local_history(cwd_path: Path) -> dict[str, dict]:
     """
-    Escaneia recursivamente o diretório atual e subpastas (ex: 'audios/') em busca de 
-    arquivos .json para consolidar dados de vídeos.
-    Extrai metadados (título, data, channel_id, uploader) usando o ID do vídeo como chave.
-    Suporta arquivos escriba_*.json, lista_*.json, e arquivos individuais como 
-    [folder]-[video_id]-[lang].json ou [video_id].info.json.
+    Escaneia a pasta atual em busca de dados de vídeos já baixados anteriormente.
+    
+    Por que isso é importante? O Escriba mantém um banco de dados (JSON), mas você pode
+    ter arquivos soltos na pasta (ex: de outros downloads). Essa função varre tudo e
+    consolida em um mapa: video_id → dados do vídeo.
+    
+    Fontes de dados que ele busca:
+    1. escriba_*.json - banco de dados principal do Escriba
+    2. lista_*.json - formato antigo/legado
+    3. *-VIDEOID.info.json - metadados do yt-dlp por vídeo
+    4. VIDEOID.info.json - formato alternativo
+    
+    Isso permite que o script "descubra" vídeos que você já tem localmente,
+    mesmo que ainda não estejam no banco de dados.
     """
     history_map = {}
     blacklist = {"package.json", "package-lock.json", "requirements.json", "env.json"}
@@ -602,11 +739,17 @@ def load_all_local_history(cwd_path: Path) -> dict[str, dict]:
 
 def _merge_video_data(history_map: dict, vid_id: str, new_data: dict):
     """
-    Combina dados de vídeos de múltiplas fontes (JSONs diferentes).
-    Prioriza:
-    1. Datas válidas (formato YYYY-MM-DD vs "N/A")
-    2. Títulos reais (evita "Avulso" ou strings vazias)
-    3. Flags de download verdadeiras (subtitle_downloaded, info_downloaded, etc)
+    Combina dados de vídeos de múltiplas fontes.
+    
+    Problema: o mesmo vídeo pode aparecer em vários lugares (JSON principal,
+    cache local, arquivos info.json). Precisamos mesclar de forma inteligente.
+    
+    Prioridade de dados (o que "vence"):
+    1. Datas válidas: "2023-01-01" > "N/A" (datas reais são melhores)
+    2. Títulos reais: "Aula de Python" > "Avulso" (títulos descritivos wins)
+    3. Flags: se qualquer fonte disse que tem legenda → tem legenda (True wins)
+    
+    Isso evita que dados vazios sobrescrevam dados bons.
     """
     if vid_id not in history_map:
         history_map[vid_id] = new_data.copy()
@@ -635,12 +778,20 @@ def load_or_create_channel_state(
     only_peek_lang: bool = False
 ) -> tuple[Path | None, list[dict], str | None]:
     """
-    Carrega o banco de dados JSON do canal e sincroniza com metadados locais.
-    Realiza:
-    1. Carregamento de todos os JSONs locais (history_map).
-    2. Listagem rápida do canal no YouTube.
-    3. Importação Reversa: vídeos locais que pertencem ao canal mas não estão na lista atual.
-    4. Persistência do estado consolidado.
+    Carrega ou cria o banco de dados JSON do canal.
+    
+    Essa é uma das funções mais importantes do Escriba. Ela:
+    
+    1. Detecta que tipo de entrada é (vídeo único, playlist, canal)
+    2. Identifica o canal/uploader (importante para naming de arquivos)
+    3. Carrega dados existentes do JSON
+    4. Busca vídeos atuais no YouTube
+    5. Mescla: vídeos novos + vídeos que você já tem localmente
+    6. Faz "importação reversa": se você tem um vídeo baixado mas ele não
+       aparece mais no canal (foi deletado), a gente mantém ele!
+    
+    O parâmetro only_peek_lang=True é um atalho: se você só quer saber
+    o idioma (sem carregar toda a lista de vídeos), usa isso.
     """
     channel_name_safe = None
     identifier = ""
@@ -725,6 +876,9 @@ def load_or_create_channel_state(
                     if target_uploader_id:
                         channel_name_safe = target_uploader_id.lstrip("@")
                         print_ok(f"Origem da playlist identificada: {BOLD}@{channel_name_safe}{RESET}")
+                    elif playlist_meta.get("uploader"):
+                         channel_name_safe = playlist_meta.get("uploader").replace(" ","_")
+                         print_ok(f"Canal da playlist (nome): {BOLD}{channel_name_safe}{RESET}")
             except Exception:
                 pass
             
@@ -734,37 +888,27 @@ def load_or_create_channel_state(
     else:
         channel_name_safe = "canal"
 
-    # Seleção inteligente do JSON
-    json_path = None
-    # 1. Tenta correspondência exata com o canal identificado
-    target_filename = f"escriba_{channel_name_safe}.json"
-    if (cwd_path / target_filename).exists():
-        json_path = cwd_path / target_filename
-    else:
-        # 2. Se houver apenas um escriba_*.json na pasta, usa ele (contexto de pasta única)
-        existing_jsons = list(cwd_path.glob("escriba_*.json"))
-        if not existing_jsons:
-            existing_jsons = list(cwd_path.glob("lista_*.json"))
-            
-        if len(existing_jsons) == 1:
-            json_path = existing_jsons[0]
-            print_info(f"Usando JSON corriente detectado: {BOLD}{json_path.name}{RESET}")
-        elif len(existing_jsons) > 1:
-            # Tenta achar um que bata com o canal atual
-            for ej in existing_jsons:
-                if channel_name_safe and channel_name_safe in ej.name:
-                    json_path = ej
-                    break
-            if not json_path:
-                # Pega o mais recente como fallback
-                json_path = Path(max([str(j) for j in existing_jsons], key=os.path.getmtime))
-                print_info(f"Sincronizando com JSON mais recente: {BOLD}{json_path.name}{RESET}")
+    folder_name = cwd_path.name
+    # channel_dir_name será usado nos nomes dos arquivos (legado agora sincronizado com a pasta)
+    channel_dir_name = folder_name
+    json_path = cwd_path / f"escriba_{folder_name}.json"
+    
+    # Migração automática de JSONs antigos para o novo formato de pasta (Consolidação)
+    legacy_jsons = list(cwd_path.glob("escriba_*.json")) + list(cwd_path.glob("lista_*.json"))
+    for lj in legacy_jsons:
+        if lj.resolve() == json_path.resolve():
+            continue
+        
+        if not json_path.exists():
+            print_info(f"Migrando base antiga para o novo padrão: {BOLD}{lj.name}{RESET} -> {BOLD}{json_path.name}{RESET}")
+            lj.rename(json_path)
         else:
-            json_path = cwd_path / target_filename
+            print_info(f"Consolidando base antiga (merge): {BOLD}{lj.name}{RESET} -> {BOLD}{json_path.name}{RESET}")
+            lj.rename(lj.with_suffix(".bak"))
 
     # Carregar/Identificar idioma persistente
     detected_lang_cached = None
-    if json_path and json_path.exists():
+    if json_path.exists():
         try:
             with open(json_path, "r", encoding="utf-8") as fd:
                 data = json.load(fd)
@@ -865,8 +1009,21 @@ def load_or_create_channel_state(
 
 def save_channel_state_json(json_path: Path | None, videos_list: list[dict], channel_handle: str | None = None, detected_language: str | None = None):
     """
-    Atualiza atomicamente arquivo JSON em disco. 
-    Garante deduplicação de video_id e preservação do idioma detectado.
+    Salva o banco de dados JSON de forma atômica.
+    
+    Por que "atômica"? Se der erro no meio do save, podemos perder dados.
+    O truque usado aqui:
+    1. Escreve em um arquivo .tmp (temporário)
+    2. Usa .replace() que é atômico na maioria dos sistemas de arquivos
+    3. Só depois apaga o arquivo antigo
+    
+    Isso garante que mesmo se der pau no meio, você não perde o JSON antigo.
+    
+    Args:
+        json_path: caminho do arquivo JSON
+        videos_list: lista de vídeos para salvar
+        channel_handle: identificador do canal (@canal)
+        detected_language: idioma detectado (preservado entre execuções)
     """
     if not json_path:
         return
@@ -900,17 +1057,21 @@ def save_channel_state_json(json_path: Path | None, videos_list: list[dict], cha
 
     final_videos = list(dedup_map.values())
 
-    # 2. Determinar handle do canal
+    # 2. Determinar handle do canal (agora apenas metadado visual)
     if not channel_handle:
-        match = re.search(r"(?:escriba_|lista_)(.+)\.json", json_path.name)
-        if match:
-            channel_handle = f"@{match.group(1)}"
+        if json_path.exists():
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    old_data = json.load(f)
+                    channel_handle = old_data.get("channel_context")
+            except: pass
             
     output_data = {
-        "channel": channel_handle if channel_handle else "N/A",
+        "folder_repository": json_path.stem.replace("escriba_", ""),
         "videos": final_videos
     }
-    
+    if channel_handle:
+        output_data["channel_context"] = channel_handle
     if detected_language:
         output_data["detected_language"] = detected_language
 
@@ -947,9 +1108,17 @@ def save_channel_state_json(json_path: Path | None, videos_list: list[dict], cha
 
 def auto_migrate_legacy_files(cwd_path: Path, state_list: list[dict]) -> bool:
     """
-    Se existirem arquivos texto antigos do projeto (historico.txt, historico-info.txt, videos_sem_legenda.txt),
-    lê e consolida os dados no state_list em memória, e depois os renomeia para .bak para não repetir.
-    Retorna True se alguma modificação nos dicionários foi feita.
+    Migra dados de arquivos texto antigos para o novo formato JSON.
+    
+   早期的版本的 Escriba usava arquivos de texto simples para tracking:
+    - historico.txt: vídeos já baixados
+    - historico-info.txt: vídeos com metadados
+    - videos_sem_legenda.txt: vídeos sem legenda
+    
+    Essa função those arquivos, extrai os IDs, e migra para o JSON.
+    Depois renomeia para .bak para não processar de novo.
+    
+    É uma "migração automática" para não perder dados de execuções antigas.
     """
     historico_ids = set()
     historico_path = cwd_path / "historico.txt"
@@ -1008,9 +1177,20 @@ def filter_state_list(
     date_limit_filter: str
 ) -> list[dict]:
     """
-    Retorna a lista filtrada contendo apenas os ponteiros dos dicts onde os requisitos
-    se encaixam no filtro de datas (se houver).
-    Como python passa dicionários por referência, alterar a lista clonada altera o state orignal também.
+    Filtra vídeos por data (parâmetro -d / --date).
+    
+    Se o usuário passou --date 20230101, queremos apenas vídeos dessa data para frente.
+    
+    Truque importante: Python passa dicionários por referência. Quando filtramos,
+    não criamos cópias - então alterações nos resultados afetam o state original.
+    Na prática é isso que queremos (memória compartilhada), mas precisa saber.
+    
+    Args:
+        full_state_list: todos os vídeos do banco
+        date_limit_filter: data no formato YYYYMMDD
+    
+    Returns:
+        Lista filtrada com referências aos mesmos dicts (não cópias!)
     """
     if not full_state_list:
         return []
@@ -1040,10 +1220,8 @@ def filter_state_list(
 
 # ─── Pós-processamento de Legendas ────────────────────────────────────────────
 
-SUBTITLE_INDEX_REGEX_PATTERN = re.compile(r"^\d+$")
-SUBTITLE_TIMESTAMP_REGEX_PATTERN = re.compile(
-    r"^\d{2}:\d{2}:\d{2}[.,]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[.,]\d{3}"
-)
+# Regex patterns used in processing
+# (Unused index/timestamp regexes removed for performance/cleanup)
 
 
 
@@ -1299,10 +1477,9 @@ def srt_to_md(
         # ── Fase 4: Metadados de cabeçalho ────────────────────────────────────
         duration_str = str(subs[-1].end).split(',')[0]
         video_url = f"https://youtube.com/watch?v={video_id}"
-        video_index = 1  # identificador sequencial padrão
 
         md_lines = [
-            f"## {video_title} <a name=\"video-{video_index:02d}\"></a>\n",
+            f"## {video_title}\n",
             f"**URL:** {video_url}  \n",
             f"**Data:** {video_date}  \n",
             f"**Duração:** {duration_str}\n",
@@ -1480,11 +1657,27 @@ def cleanup_subtitles(
     indentation_prefix: str = "  ",
 ) -> tuple[bool, Path | None]:
     """
-    Remove variações duplicadas de legenda geradas pelo yt-dlp,
-    mantendo apenas o arquivo com o menor nome (ex: prefere 'pt' sobre 'pt-BR').
-    Renomeia de '.pt.srt' para '-pt.srt'.
-    Se convert_srt_to_md=True, retorna o Path para processamento MD posterior.
-    Retorna (True, Path) se processou alguma legenda, caso contrário (False, None).
+    Limpa e organiza arquivos de legenda baixados.
+    
+    Por que precisa? O yt-dlp às vezes baixa múltiplas versões da mesma legenda:
+    - video-id.pt.srt
+    - video-id.pt-BR.srt  
+    - video-id.en.srt
+    
+    Essa função:
+    1. Detecta se há múltiplas legendas
+    2. Mantém apenas a mais curta (geralmente a mais simples, ex: 'pt' vs 'pt-BR')
+    3. Renomeia o arquivo para formato padronizado (canal-ID-pt.srt)
+    
+    Args:
+        cwd_path: pasta onde estão os arquivos
+        channel_dir_name: nome do canal (para naming)
+        video_id: ID do vídeo
+        convert_srt_to_md: se True, marca para converter depois
+        flag_keep_srt: se True, mantém o .srt após converter para .md
+    
+    Returns:
+        (sucesso: bool, caminho_do_arquivo: Path ou None)
     """
     subtitle_file_pattern = str(cwd_path / f"{channel_dir_name}-{video_id}*.srt")
     matching_subtitle_files_list = glob.glob(subtitle_file_pattern)
@@ -1533,8 +1726,20 @@ def download_video(
     output_dir_path: Path | None = None,
 ) -> int:
     """
-    Executa o yt-dlp para baixar legendas ou áudio de um único vídeo.
-    Retorna o exit code.
+    Baixa legendas ou áudio de um vídeo específico usando yt-dlp.
+    
+    O yt-dlp é chamado como subprocesso. Essa função monta todos os argumentos:
+    - --write-info-json: salva metadados (útil depois)
+    - --write-auto-sub: baixa legendas automáticas se não houver manuais
+    - --convert-subs srt: converte para formato SRT
+    - --sub-langs: qual idioma pedir
+    
+    Para áudio (audio_only_flag=True):
+    - Baixa apenas o melhor áudio (formato 'ba[ext=webm]')
+    - Útil para podcasts ou quando não quer vídeo
+    
+    Returns:
+        Exit code do processo (0 = sucesso, outro = erro)
     """
     output_template_string = f"{channel_dir_name}-{video_id}"
     if audio_only_flag:
@@ -1575,8 +1780,17 @@ def harvest_and_delete_info_json(
     video_dict: dict,
 ) -> bool:
     """
-    Extrai metadados do arquivo .info.json (título, data, duração, views),
-    atualiza o dicionário do vídeo em memória e remove o arquivo temporário.
+    Colhe (harvest) metadados do arquivo .info.json criado pelo yt-dlp.
+    
+    Quando o yt-dlp baixa um vídeo ou legenda, ele também cria um arquivo
+    .info.json com metadados (título, data, duração, views, etc).
+    
+    Essa função:
+    1. Lê esse arquivo .info.json
+    2. Extrai os dados úteis para o nosso dicionário de vídeo
+    3. Apaga o arquivo (não precisamos mais dele)
+    
+    "Harvest" = colher, coletar - termo comum em scraping.
     """
     info_json_path = cwd_path / f"{channel_dir_name}-{video_id}.info.json"
     if not info_json_path.exists():
@@ -1601,14 +1815,14 @@ def harvest_and_delete_info_json(
             video_dict["view_count"] = meta.get("view_count")
         
         harvested_flag = True
-    except Exception:
-        pass
+    except Exception as e:
+        print_warn(f"Erro ao processar info.json de {video_id}: {e}")
     finally:
         try:
             if info_json_path.exists():
                 info_json_path.unlink()
-        except Exception:
-            pass
+        except Exception as e:
+            print_warn(f"Erro ao remover arquivo temporário {info_json_path.name}: {e}")
     return harvested_flag
 
 
@@ -1669,8 +1883,21 @@ VIDEO_ID_REGEX_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 def parse_input_type(channel_input_string: str) -> tuple[str, str, str]:
     """
-    Classifica a entrada do usuário e retorna (channel_url_string, input_type_string, video_id_string | "").
-    input_type_string: 'video', 'playlist', ou 'channel'
+    Detecta o tipo de entrada que o usuário passou.
+    
+    O usuário pode passar várias coisas:
+    - @canal → é um canal (handle)
+    - https://youtube.com/@canal → canal (URL)
+    - https://youtube.com/watch?v=VIDEOID → vídeo único
+    - VIDEOID (11 chars) → vídeo curto
+    - https://youtube.com/playlist?list=XYZ → playlist
+    
+    Returns:
+        (URL normalizada, tipo, video_id se for vídeo)
+    
+    Examples:
+        "@canal" → ("https://youtube.com/@canal", "channel", "")
+        "dQw4w9WgXcQ" → ("https://youtube.com/watch?v=dQw4w9WgXcQ", "video", "dQw4w9WgXcQ")
     """
     # URL completa de vídeo
     if "watch?v=" in channel_input_string or "youtu.be/" in channel_input_string:
@@ -1697,7 +1924,16 @@ def parse_input_type(channel_input_string: str) -> tuple[str, str, str]:
 
 def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
     """
-    Etapa 1: monta a configuração da sessão, imprime header e seção de config.
+    Etapa 1: configura tudo que precisamos antes de começar.
+    
+    Essa função faz o "setup" inicial:
+    1. Detecta se o usuário passou um canal ou não
+    2. Se não passou, tenta descobrir a partir do JSON existente
+    3. Normaliza a URL (converte @canal → https://youtube.com/@canal)
+    4. Valida o ambiente (existe .venv?)
+    5. Imprime o header bonitão
+    
+    Retorna um objeto SessionConfig com tudo que as outras funções precisam.
     """
     cwd_path = Path.cwd()
     channel_dir_name = cwd_path.name
@@ -1706,8 +1942,8 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
     # Auto-detecção de canal pelo state list quando não informado
     if not cli_args.canal:
         latest_json_path = get_latest_json_path(cwd_path)
-        if not latest_json_path:
-            print_err("Parâmetro 'canal' não fornecido e nenhum arquivo escriba_*.json encontrado para auto-completar.")
+        if not latest_json_path.exists():
+            print_err("Parâmetro 'canal' não fornecido e nenhum banco de dados (escriba_*.json) encontrado.")
             print_info(f"{BOLD}Como usar:{RESET}")
             print_info(f"  python3 escriba.py {BCYAN}@Canal{RESET}")
             print_info(f"  python3 escriba.py {BCYAN}https://www.youtube.com/playlist?list=...{RESET}")
@@ -1727,7 +1963,6 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
                 else:
                     print_err("Não foi possível inferir o canal a partir do JSON.")
                     sys.exit(1)
-            print_info(f"Canal detectado automaticamente a partir de {latest_json_path.name}")
         except Exception as e:
             print_err(f"Erro ao ler JSON para auto-detecção: {e}")
             sys.exit(1)
@@ -1745,6 +1980,9 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
         execution_mode_label += "  ·  rápido"
     print_header(channel_input_string, VERSION, execution_mode_label)
 
+    # Mensagem de auto-detecção do canal (depois do header)
+    if latest_json_path:
+        print_info(f"Canal detectado automaticamente a partir de {latest_json_path.name}")
     return SessionConfig(
         cwd_path=cwd_path,
         channel_dir_name=channel_dir_name,
@@ -1754,13 +1992,26 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
         channel_url=channel_url_string,
     )
 
-
 def init_auth_and_language(
     session_config: SessionConfig, language_argument_string: str, force_refresh_cookies_flag: bool
 ) -> tuple[list[str], str]:
     """
-    Etapa 2: configura cookies e detecta/define o idioma.
-    Retorna (cookie_args_list, language_opt_string).
+    Etapa 2: configura autenticação e idioma.
+    
+    Duas coisas importantes aqui:
+    
+    1. Cookies: necessários para acessar conteúdo restrito do YouTube
+       - Primeiro tenta usar cache existente
+       - Se não tem, extrai do Chrome
+       - Filtra para manter só cookies do YouTube
+    
+    2. Idioma: qual legenda baixar?
+       - Se usuário passou --lang, usa esse
+       - Se não, detecta automaticamente a partir do canal
+       - Salva no cache para não precisar detectar de novo
+    
+    Returns:
+        (cookie_args para yt-dlp, idioma a usar)
     """
     print_section("Autenticação")
     cookie_args_list = configure_cookies(session_config.cwd_path, session_config.script_dir_path, force_refresh_cookies_flag)
@@ -1782,6 +2033,8 @@ def init_auth_and_language(
     # precisamos forçar uma extração leve do yt-dlp agora para gerar o cookies.txt e filtrá-lo.
     if "--cookies-from-browser" in cookie_args_list:
         cookies_txt_path = session_config.cwd_path / "cookies.txt"
+        
+        # Só executa warm-up se o arquivo ainda não existe (pode ter sido criado por 'detect_language' ou 'load_state')
         if not cookies_txt_path.is_file():
             print_warn("Executando warm-up para extrair cookies do Chrome silenciosamente...")
             subprocess.run(
@@ -1790,11 +2043,13 @@ def init_auth_and_language(
             )
         
         # Filtrar o lixo exportado
-        filter_youtube_cookies(cookies_txt_path)
-        
-        # Reconfigurar para usar apenas o TXT lido do cache a partir de agora
-        cookie_args_list = configure_cookies(session_config.cwd_path, session_config.script_dir_path, False)
-        print_info("Cookies filtrados limitados ao YouTube (trackers removidos).")
+        if cookies_txt_path.is_file():
+            filter_youtube_cookies(cookies_txt_path)
+            # Reconfigurar para usar apenas o TXT lido do cache a partir de agora (modo silencioso)
+            cookie_args_list = configure_cookies(session_config.cwd_path, session_config.script_dir_path, False, silent=True)
+            print_info("Cookies filtrados limitados ao YouTube (trackers removidos).")
+        else:
+            print_err("Falha na extração de cookies do navegador.")
 
     return cookie_args_list, language_opt_string
 
@@ -1806,9 +2061,22 @@ def process_videos(
     cli_args: argparse.Namespace,
 ) -> tuple[int, int, int, int]:
     """
-    Etapa 3: itera o banco de dados JSON de estado (escriba_*.json), executando
-    filtros incrementais em memória e processando as requisições yt-dlp.
-    Retorna os contadores numéricos formatados para o summary da Etapa 4.
+    Etapa 3: o coração do script - baixa as legendas.
+    
+    Esse é o loop principal que:
+    1. Carrega a lista de vídeos do banco JSON
+    2. Para cada vídeo:
+       - Já foi baixado? → pula
+       - Já marcou "sem legenda"? → pula  
+       - Baixa a legenda com yt-dlp
+       - Colhe metadados do .info.json
+       - Limpa arquivos de legenda
+       - Converte para MD (se habilitado)
+       - Salva progresso no JSON (a cada 5 vídeos)
+    3. No final, converte todas as legendas pendentes para MD
+    
+    Retorna contadores para o resumo final:
+    (baixados, pulados, erros, total)
     """
     # Detectar se é vídeo avulso
     _, input_type_string, single_video_id = parse_input_type(session_config.channel_input_url_or_handle)
@@ -1817,6 +2085,10 @@ def process_videos(
     json_state_path, full_state_list, detected_lang_cached = load_or_create_channel_state(
         session_config.cwd_path, session_config.yt_dlp_cmd_list, cookie_args_list, session_config.channel_url
     )
+    
+    # Se descobrimos um uploader/canal novo agora (ex: via playlist), salva no JSON
+    if session_config.discovered_uploader_id:
+        save_channel_state_json(json_state_path, full_state_list, channel_handle=session_config.discovered_uploader_id)
     
     # Garantir que o idioma detectado esteja no arquivo caso tenha sido descoberto agora
     if language_opt_string and language_opt_string != detected_lang_cached:
@@ -2062,13 +2334,15 @@ def process_videos(
 
     # ---------- Processamento Deferido de MD --------------
     if pending_md_conversions:
+        total_md = len(pending_md_conversions)
         print()
-        print_info(f"Fase 4: Clusterização de IA (TF-IDF) para {BOLD}{len(pending_md_conversions)}{RESET} vídeos...")
-        for srt_path, vid_id, vid_title, vid_date in pending_md_conversions:
+        print_info(f"Fase 4: Clusterização de IA (TF-IDF) — {BOLD}{total_md} arquivo(s) .md a processar{RESET}")
+        for idx, (srt_path, vid_id, vid_title, vid_date) in enumerate(pending_md_conversions, start=1):
+            idx_prefix = f"{BLUE}[{idx:>{len(str(total_md))}}/{total_md}]{RESET}"
             if not srt_path.exists():
                 continue
             
-            print_dl(f"{vid_id}{RESET}  {DIM}gerando Cluster MD{RESET}", "  ")
+            print_dl(f"{idx_prefix} {vid_id}{RESET}  {DIM}gerando .md{RESET}", "  ")
             md_path = srt_to_md(srt_path, vid_id, vid_title, video_date=vid_date, threshold=0.3, indentation_prefix="    ")
             
             # Notion upload: APENAS em modo de vídeo único (user request)
@@ -2153,6 +2427,8 @@ def regen_md_from_srt_files() -> None:
     converted_count = 0
     skipped_count = 0
     current_label = ""
+
+    print_info(f"{BOLD}Total de {total_count} arquivo(s) .srt para processar...{RESET}")
 
     for idx, (srt_path, origin_label) in enumerate(srt_files_list, start=1):
         # Imprimir seção ao trocar de diretório
