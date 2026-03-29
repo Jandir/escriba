@@ -1940,6 +1940,7 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
     script_dir_path, yt_dlp_cmd_list = setup_environment()
     
     # Auto-detecção de canal pelo state list quando não informado
+    latest_json_path = None
     if not cli_args.canal:
         latest_json_path = get_latest_json_path(cwd_path)
         if not latest_json_path.exists():
