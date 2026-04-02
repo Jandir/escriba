@@ -1842,7 +1842,7 @@ def parse_args() -> argparse.Namespace:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    cli_parser.add_argument("canal", nargs="?", default=None, help="Canal, playlist, vídeo ou URL (ex: @Canal, VIDEO_ID, URL de vídeo/playlist)")
+    cli_parser.add_argument("canal", nargs="*", default=None, help="Canal, playlist, vídeo ou URL (ex: @Canal, VIDEO_ID, URL de vídeo/playlist)")
     cli_parser.add_argument("-l", "--lang", default="", metavar="LANG",
                         help="Idioma das legendas (ex: pt, en). Padrão: idioma nativo do canal")
     cli_parser.add_argument("-a", "--audio-only", action="store_true",
@@ -1889,35 +1889,41 @@ def parse_input_type(channel_input_string: str) -> tuple[str, str, str]:
     - @canal → é um canal (handle)
     - https://youtube.com/@canal → canal (URL)
     - https://youtube.com/watch?v=VIDEOID → vídeo único
+    - https://youtube.com/shorts/VIDEOID → shorts (vídeo único)
+    - https://youtube.com/live/VIDEOID → live (vídeo único)
     - VIDEOID (11 chars) → vídeo curto
     - https://youtube.com/playlist?list=XYZ → playlist
     
     Returns:
         (URL normalizada, tipo, video_id se for vídeo)
-    
-    Examples:
-        "@canal" → ("https://youtube.com/@canal", "channel", "")
-        "dQw4w9WgXcQ" → ("https://youtube.com/watch?v=dQw4w9WgXcQ", "video", "dQw4w9WgXcQ")
     """
-    # URL completa de vídeo
-    if "watch?v=" in channel_input_string or "youtu.be/" in channel_input_string:
-        channel_url_string = channel_input_string if channel_input_string.startswith("http") else f"https://www.youtube.com/watch?v={channel_input_string}"
-        # Extrair video ID da URL
-        regex_match_result = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", channel_url_string)
-        video_id = regex_match_result.group(1) if regex_match_result else ""
+    # 1. Tentar detectar se é um VÍDEO (vários formatos de URL ou ID direto)
+    # Padrões comuns de vídeo: watch?v=, youtu.be/, shorts/, live/, embed/, v/
+    # Usamos re.search para encontrar o ID em qualquer lugar da string (importante para URLs sem aspas que podem ter 'lixo')
+    video_regex = re.compile(r"(?:v=|youtu\.be/|shorts/|live/|embed/|v/)([A-Za-z0-9_-]{11})")
+    video_match = video_regex.search(channel_input_string)
+    
+    if video_match:
+        video_id = video_match.group(1)
+        # Se contiver 'list=' e for uma URL, poderíamos tratar como playlist, 
+        # mas no Escriba o comportamento padrão para links watch?v=...&list=... é focar no vídeo.
+        # Se o usuário quiser a playlist, ele deve passar o link da playlist (detectado abaixo).
+        
+        # Reconstrói a URL se necessário
+        if not channel_input_string.startswith("http"):
+            channel_url_string = f"https://www.youtube.com/watch?v={video_id}"
+        else:
+            channel_url_string = channel_input_string
         return channel_url_string, "video", video_id
 
-    # ID avulso de vídeo (11 caracteres)
-    if VIDEO_ID_REGEX_PATTERN.match(channel_input_string):
-        channel_url_string = f"https://www.youtube.com/watch?v={channel_input_string}"
-        return channel_url_string, "video", channel_input_string
-
-    # Playlist
-    if "playlist?list=" in channel_input_string:
-        channel_url_string = channel_input_string if channel_input_string.startswith("http") else f"https://www.youtube.com/{channel_input_string}"
+    # 2. Playlist (identificada por 'list=' ou pelo path '/playlist/')
+    if "list=" in channel_input_string or "/playlist/" in channel_input_string:
+        channel_url_string = channel_input_string if channel_input_string.startswith("http") else f"https://www.youtube.com/{channel_input_string.lstrip('/')}"
         return channel_url_string, "playlist", ""
 
-    # Canal (handle ou URL)
+    # 3. ID avulso de vídeo (exatamente 11 caracteres que batem no regex de ID)
+
+    # 4. Canal (padrão)
     channel_url_string = channel_input_string if channel_input_string.startswith("http") else f"https://www.youtube.com/{channel_input_string}"
     return channel_url_string, "channel", ""
 
@@ -2629,6 +2635,17 @@ class NotionExporter:
 
 def main() -> None:
     cli_args = parse_args()
+    
+    # Se 'canal' foi passado como lista (nargs='*'), junta tudo.
+    # Se o primeiro item parece o início de uma URL (http), unimos sem espaços 
+    # para tentar reconstruir URLs que o shell pode ter quebrado em tokens (ex: por causa de & não escapado).
+    if isinstance(cli_args.canal, list) and cli_args.canal:
+        if cli_args.canal[0].startswith("http"):
+            cli_args.canal = "".join(cli_args.canal)
+        else:
+            cli_args.canal = " ".join(cli_args.canal)
+    elif isinstance(cli_args.canal, list):
+        cli_args.canal = None
 
     # Short-circuit: modo offline de regeneração MD
     if cli_args.regen_md:
