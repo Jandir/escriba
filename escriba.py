@@ -69,7 +69,7 @@ import requests
 
 from collections import Counter
 
-VERSION = "2.4.4"
+VERSION = "2.4.5"
 
 _script_dir = Path(__file__).parent.resolve()
 
@@ -165,6 +165,7 @@ class SessionConfig:
     yt_dlp_cmd_list: list[str]
     channel_input_url_or_handle: str
     channel_url: str
+    mp3: bool = False
     discovered_uploader_id: Optional[str] = None
 
 # Carrega variáveis do .env (localizado no diretório do script)
@@ -208,9 +209,6 @@ ICON_INFO = f"{BLUE}•{RESET}"   # informação
 
 # ─── Utilitários de Layout ────────────────────────────────────────────────────
 
-DIV_THIN  = f"{DIM}{'─' * 60}{RESET}"
-DIV_THICK = f"{BLUE}{'━' * 60}{RESET}"
-
 
 def _print_formatted(icon: str, message: str, indentation_prefix: str = "  ", end_char: str = "\n") -> None:
     """
@@ -238,26 +236,16 @@ def print_dl(message: str, indentation_prefix: str = "  ")  -> None: _print_form
 
 def print_section(section_title: str) -> None:
     """Imprime um separador de seção com título."""
-    print(f"\n{DIV_THIN}")
+    print()
     print(f"  {BOLD}{BWHITE}{section_title}{RESET}")
-    print(f"{DIV_THIN}")
-
-
-def print_header(channel_name: str, script_version: str, execution_mode: str) -> None:
-    """Header principal em box drawing."""
-    header_line_1 = f" escriba  v{script_version} "
-    header_line_2 = f" Canal: {channel_name} "
-    header_line_3 = f" Modo:  {execution_mode} "
-    max_width = max(len(header_line_1), len(header_line_2), len(header_line_3)) + 2
-    horizontal_bar = "━" * max_width
-    print()
-    print(f"{BCYAN}┏{horizontal_bar}┓{RESET}")
-    print(f"{BCYAN}┃{RESET}{BOLD}{header_line_1:<{max_width}}{RESET}{BCYAN}┃{RESET}")
-    print(f"{BCYAN}┃{RESET}{DIM}{header_line_2:<{max_width}}{RESET}{BCYAN}┃{RESET}")
-    print(f"{BCYAN}┃{RESET}{DIM}{header_line_3:<{max_width}}{RESET}{BCYAN}┃{RESET}")
-    print(f"{BCYAN}┗{horizontal_bar}┛{RESET}")
     print()
 
+
+def print_header(script_version: str) -> None:
+    """Header principal em texto mostrando nome e versão."""
+    print()
+    print(f"  {BOLD}{BCYAN}Escriba v{script_version}{RESET}")
+    print()
 
 def print_countdown(seconds_count: int, message: str, indentation_prefix: str = "  ") -> None:
     """
@@ -767,6 +755,9 @@ def _merge_video_data(history_map: dict, vid_id: str, new_data: dict):
         if new_data.get("subtitle_downloaded"): existing["subtitle_downloaded"] = True
         if new_data.get("info_downloaded"): existing["info_downloaded"] = True
         if new_data.get("has_no_subtitle"): existing["has_no_subtitle"] = True
+        # Preservar source_channel se existir
+        if new_data.get("source_channel") and not existing.get("source_channel"):
+            existing["source_channel"] = new_data["source_channel"]
 
 
 
@@ -793,6 +784,7 @@ def load_or_create_channel_state(
     O parâmetro only_peek_lang=True é um atalho: se você só quer saber
     o idioma (sem carregar toda a lista de vídeos), usa isso.
     """
+    history_map = load_all_local_history(cwd_path)
     channel_name_safe = None
     identifier = ""
     
@@ -805,8 +797,6 @@ def load_or_create_channel_state(
         match = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", channel_url)
         identifier = match.group(1) if match else "video"
         
-        # 0. Verificação em cache local antes de chamar o YouTube
-        history_map = load_all_local_history(cwd_path)
         if identifier in history_map:
             hist_entry = history_map[identifier]
             target_uploader_id = hist_entry.get("uploader_id")
@@ -839,13 +829,11 @@ def load_or_create_channel_state(
         match = re.search(r"@([A-Za-z0-9_-]+)", channel_url)
         channel_name_safe = match.group(1) if match else "canal"
         # Carregamos o histórico aqui também para uso posterior
-        history_map = load_all_local_history(cwd_path)
     elif "list=" in channel_url:
         match = re.search(r"list=([A-Za-z0-9_-]+)", channel_url)
         identifier = match.group(1) if match else "playlist"
         
         # 0. Verificação em cache local para playlists
-        history_map = load_all_local_history(cwd_path)
         for vid, entry in history_map.items():
             if "playlists" in entry and identifier in entry["playlists"]:
                 target_uploader_id = entry.get("uploader_id")
@@ -948,6 +936,16 @@ def load_or_create_channel_state(
     
     playlist_ctx = identifier if "list=" in channel_url else None
 
+    # Determinar o identificador do canal de origem para tagging de vídeos
+    source_channel_tag = None
+    if "/@" in channel_url:
+        m = re.search(r'/@([A-Za-z0-9_-]+)', channel_url)
+        if m: source_channel_tag = f"@{m.group(1)}"
+    elif target_uploader_id:
+        source_channel_tag = target_uploader_id if target_uploader_id.startswith("@") else f"@{target_uploader_id}"
+    elif channel_name_safe and channel_name_safe not in ("canal",):
+        source_channel_tag = f"@{channel_name_safe}"
+
     # Se ainda não temos os IDs de canal/uploader, tenta pegar do primeiro vídeo da lista atual
     if not target_channel_id and not target_uploader_id and current_videos_list:
         v0 = current_videos_list[0]
@@ -955,6 +953,8 @@ def load_or_create_channel_state(
         if v0_id in history_map:
             target_channel_id = history_map[v0_id].get("channel_id")
             target_uploader_id = history_map[v0_id].get("uploader_id")
+            if not source_channel_tag and target_uploader_id:
+                source_channel_tag = target_uploader_id if target_uploader_id.startswith("@") else f"@{target_uploader_id}"
 
     playlist_ctx = identifier if "list=" in channel_url else None
 
@@ -977,9 +977,14 @@ def load_or_create_channel_state(
                 if "playlists" not in existing: existing["playlists"] = []
                 if playlist_ctx not in existing["playlists"]:
                     existing["playlists"].append(playlist_ctx)
+            
+            # Associar ao canal de origem (se ainda não atribuído)
+            if source_channel_tag and not existing.get("source_channel"):
+                existing["source_channel"] = source_channel_tag
         else:
             # Novo vídeo
             if playlist_ctx: vid_entry["playlists"] = [playlist_ctx]
+            if source_channel_tag: vid_entry["source_channel"] = source_channel_tag
             state_map[vid_id] = vid_entry
             new_videos_count += 1
 
@@ -994,8 +999,29 @@ def load_or_create_channel_state(
         elif channel_name_safe and channel_name_safe.lower() in str(hist_entry.get("uploader", "")).lower(): is_same_channel = True
         
         if is_same_channel:
-            state_map[vid_id] = hist_entry.copy()
+            imported = hist_entry.copy()
+            if source_channel_tag and not imported.get("source_channel"):
+                imported["source_channel"] = source_channel_tag
+            state_map[vid_id] = imported
             imported_count += 1
+
+    # 5. Backfill: Associar vídeos órfãos a um canal via metadados do .info.json
+    orphan_resolved = 0
+    for vid_id, vid_entry in state_map.items():
+        if vid_entry.get("source_channel"):
+            continue  # Já tem canal atribuído
+        
+        # Tentar resolver via history_map (dados dos .info.json locais)
+        if vid_id in history_map:
+            hist = history_map[vid_id]
+            uploader_id = hist.get("uploader_id")
+            if uploader_id:
+                tag = uploader_id if uploader_id.startswith("@") else f"@{uploader_id}"
+                vid_entry["source_channel"] = tag
+                orphan_resolved += 1
+    
+    if orphan_resolved > 0:
+        print_info(f"Associados {BOLD}{orphan_resolved}{RESET} vídeos órfãos a canais via metadados locais.")
 
     final_results_list = list(state_map.values())
     
@@ -1007,7 +1033,7 @@ def load_or_create_channel_state(
     return json_path, final_results_list, detected_lang_cached
 
 
-def save_channel_state_json(json_path: Path | None, videos_list: list[dict], channel_handle: str | None = None, detected_language: str | None = None):
+def save_channel_state_json(json_path: Path | None, videos_list: list[dict], channel_handle: str | None = None, detected_language: str | None = None, youtube_channel: str | None = None):
     """
     Salva o banco de dados JSON de forma atômica.
     
@@ -1074,18 +1100,69 @@ def save_channel_state_json(json_path: Path | None, videos_list: list[dict], cha
         output_data["channel_context"] = channel_handle
     if detected_language:
         output_data["detected_language"] = detected_language
+    if youtube_channel:
+        output_data["youtube_channel"] = youtube_channel
 
-    # Tenta preservar campos existentes se não passamos novos (ex: idioma)
+    # 3. Gerenciamento de múltiplos canais (Coleção de handles associados a esta pasta)
+    all_channels = []
+    
+    # Tenta preservar campos existentes e migrar para lista
     if json_path.exists():
         try:
             with open(json_path, "r", encoding="utf-8") as f:
                 old_data = json.load(f)
                 if isinstance(old_data, dict):
-                    if not channel_handle:
-                        output_data["channel"] = old_data.get("channel", output_data["channel"])
+                    # Recupera lista existente ou cria do singular
+                    existing_channels = old_data.get("youtube_channels", [])
+                    if isinstance(existing_channels, list):
+                        all_channels = [c for c in existing_channels if c]
+                    
+                    # Migração do singular se não estiver na lista
+                    legacy_channel = old_data.get("youtube_channel") or old_data.get("channel")
+                    if legacy_channel and legacy_channel not in all_channels:
+                        all_channels.append(legacy_channel)
+
+                    # Preservação de outros metadados
+                    if not channel_handle and "channel_context" in old_data:
+                        output_data["channel_context"] = old_data["channel_context"]
                     if not detected_language and "detected_language" in old_data:
                         output_data["detected_language"] = old_data["detected_language"]
+                    if not youtube_channel and "youtube_channel" in old_data:
+                        output_data["youtube_channel"] = old_data["youtube_channel"]
         except: pass
+
+    # Adiciona o canal atual à lista mestre se for novo
+    # GUARD: Apenas canais reais entram na lista (não vídeos avulsos ou playlists)
+    def _is_channel_url(url_or_handle: str) -> bool:
+        """Verifica se a string representa um canal do YouTube (não um vídeo ou playlist)."""
+        if not url_or_handle:
+            return False
+        s = url_or_handle.strip()
+        # Handle direto: @Canal
+        if s.startswith("@"):
+            return True
+        # URLs de canal
+        if "/@" in s or "/channel/" in s or "/c/" in s or "/user/" in s:
+            return True
+        # Rejeitar URLs de vídeo ou playlist
+        if "watch?v=" in s or "/shorts/" in s or "list=" in s or "youtu.be/" in s:
+            return False
+        # Rejeitar IDs soltos de 11 chars (vídeos)
+        if len(s) == 11 and s.isalnum():
+            return False
+        return False
+
+    if youtube_channel and _is_channel_url(youtube_channel) and youtube_channel not in all_channels:
+        all_channels.append(youtube_channel)
+    elif not youtube_channel and all_channels:
+        # Se não passamos canal agora, mas temos historico, o "principal" é o primeiro
+        output_data["youtube_channel"] = all_channels[0]
+
+    # Limpar entradas inválidas que possam ter entrado antes desta correção
+    all_channels = [ch for ch in all_channels if _is_channel_url(ch)]
+
+    if all_channels:
+        output_data["youtube_channels"] = all_channels
     
     # Force the path to strictly be the modern format if it isn't already
     target_write_path = json_path
@@ -1170,6 +1247,75 @@ def auto_migrate_legacy_files(cwd_path: Path, state_list: list[dict]) -> bool:
     if migrated_count > 0:
         print_ok(f"Migração de arquivos de log textuais (legacy) detectada e concluída ({migrated_count} updates no JSON).")
     return True
+
+
+def migrate_all_databases(cwd_path: Path) -> None:
+    """
+    Varre a pasta atual em busca de arquivos JSON (escriba_*.json e lista_*.json)
+    e os adapta para a nova versão (adicionando youtube_channel e padronizando nomes).
+    """
+    json_files = list(cwd_path.glob("escriba_*.json")) + list(cwd_path.glob("lista_*.json"))
+    if not json_files:
+        print_info("Nenhum banco de dados compatível encontrado para migração.")
+        return
+        
+    print_section("Migração de Banco de Dados")
+    print_info(f"Verificando {len(json_files)} arquivo(s) para adaptação...")
+    migrated_count = 0
+    
+    for json_path in json_files:
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            if not isinstance(data, dict):
+                continue
+                
+            needs_migration = False
+            
+            # 1. youtube_channel (novo campo obrigatório para auto-detect robusto)
+            if "youtube_channel" not in data:
+                if "channel" in data:
+                    data["youtube_channel"] = data["channel"]
+                    needs_migration = True
+                elif "channel_context" in data:
+                    data["youtube_channel"] = data["channel_context"]
+                    needs_migration = True
+            
+            # 2. Renomear lista_*.json para escriba_*.json (padronização de 2026)
+            is_legacy_name = json_path.name.startswith("lista_")
+            
+            if needs_migration or is_legacy_name:
+                # Extrair campos para o save_channel_state_json
+                videos = data.get("videos", [])
+                handle = data.get("channel_context")
+                lang = data.get("detected_language")
+                yt_channel = data.get("youtube_channel")
+                
+                print_info(f"Adaptando: {BOLD}{json_path.name}{RESET}...")
+                save_channel_state_json(
+                    json_path, 
+                    videos, 
+                    channel_handle=handle, 
+                    detected_language=lang, 
+                    youtube_channel=yt_channel
+                )
+                
+                # Se era lista_*, o save_channel_state_json criou o escriba_*.json
+                # Precisamos remover o arquivo antigo manualmente para limpar a pasta
+                if is_legacy_name:
+                    new_path = json_path.with_name(json_path.name.replace("lista_", "escriba_"))
+                    if new_path.exists() and new_path != json_path:
+                        json_path.unlink()
+                
+                migrated_count += 1
+        except Exception as e:
+            print_err(f"Falha ao migrar {json_path.name}: {e}")
+            
+    if migrated_count > 0:
+        print_ok(f"Migração concluída com sucesso! {BOLD}{migrated_count}{RESET} arquivo(s) adaptados.")
+    else:
+        print_info("Todos os bancos de dados já estão na versão mais recente.")
 
 
 def filter_state_list(
@@ -1724,6 +1870,7 @@ def download_video(
     channel_dir_name: str,
     audio_only_flag: bool,
     output_dir_path: Path | None = None,
+    mp3_flag: bool = False,
 ) -> int:
     """
     Baixa legendas ou áudio de um vídeo específico usando yt-dlp.
@@ -1734,31 +1881,50 @@ def download_video(
     - --convert-subs srt: converte para formato SRT
     - --sub-langs: qual idioma pedir
     
-    Para áudio (audio_only_flag=True):
+    Para áudio (audio_only_flag=True/mp3_flag=True):
     - Baixa apenas o melhor áudio (formato 'ba[ext=webm]')
-    - Útil para podcasts ou quando não quer vídeo
+    - Renomeia o arquivo para o TITULO do vídeo (solicitação do usuário)
+    - Converte para MP3 se mp3_flag for True
     
     Returns:
         Exit code do processo (0 = sucesso, outro = erro)
     """
-    output_template_string = f"{channel_dir_name}-{video_id}"
+    # Naming convention: Título para áudio, [Channel]-[ID] para legendas
     if audio_only_flag:
-        output_template_string += ".%(ext)s"
+        output_template_string = "%(title)s.%(ext)s"
+    else:
+        output_template_string = f"{channel_dir_name}-{video_id}"
         
     if output_dir_path:
         output_template_string = str(output_dir_path / output_template_string)
 
+    # Base arguments
     download_cmd_list = (
         yt_dlp_cmd_list
         + ["--js-runtimes", f"node:{NODE_PATH}"]
         + ["--ignore-no-formats-error"]
         + ["--write-info-json"]
-        + (["-f", "ba[ext=webm]"] if audio_only_flag else ["--skip-download", "--write-auto-sub", "--convert-subs", "srt"])
-        + cookie_args_list
-        + (["--sub-langs", language_opt_string] if not audio_only_flag else [])
-        + ["-o", output_template_string]
-        + [f"https://www.youtube.com/watch?v={video_id}"]
+        + ["--restrict-filenames"]  # Evita problemas com caracteres especiais no título
     )
+
+    # Audio vs Subtitles logic
+    if mp3_flag:
+        download_cmd_list += [
+            "--extract-audio",
+            "--audio-format", "mp3",
+            "--audio-quality", "0",  # Melhor qualidade
+        ]
+    elif audio_only_flag:
+        download_cmd_list += ["-f", "ba[ext=webm]"]
+    else:
+        # Modo legendas
+        download_cmd_list += ["--skip-download", "--write-auto-sub", "--convert-subs", "srt"]
+        download_cmd_list += ["--sub-langs", language_opt_string]
+
+    # Cookies, Output and URL
+    download_cmd_list += cookie_args_list
+    download_cmd_list += ["-o", output_template_string]
+    download_cmd_list += [f"https://www.youtube.com/watch?v={video_id}"]
 
     subprocess_instance = subprocess.Popen(download_cmd_list)
     try:
@@ -1846,7 +2012,9 @@ def parse_args() -> argparse.Namespace:
     cli_parser.add_argument("-l", "--lang", default="", metavar="LANG",
                         help="Idioma das legendas (ex: pt, en). Padrão: idioma nativo do canal")
     cli_parser.add_argument("-a", "--audio-only", action="store_true",
-                        help="Baixa APENAS o áudio do vídeo (webm/opus), sem legendas")
+                        help="Baixa APENAS o áudio do vídeo (formato nativo webm/opus)")
+    cli_parser.add_argument("--mp3", action="store_true",
+                        help="Converte o áudio para MP3 (ativa modo áudio automaticamente)")
     cli_parser.add_argument("-m", "--md", action="store_true", default=True,
                         help="Exporta legendas em .md segmentado por IA via TF-IDF (Padrão: Ativo)")
     cli_parser.add_argument("--no-md", action="store_false", dest="md",
@@ -1871,6 +2039,8 @@ def parse_args() -> argparse.Namespace:
                         help="Modo rápido: pula o tempo de espera entre downloads")
     cli_parser.add_argument("--regen-md", action="store_true",
                         help="Modo offline: regenera .md a partir de todos os .srt na pasta atual (não faz downloads)")
+    cli_parser.add_argument("--migrate", action="store_true",
+                        help="Adapta bancos de dados JSON antigos para a nova versão (youtube_channel)")
     cli_parser.add_argument("-v", "--version", action="version", version=f"Versão: {VERSION}")
     return cli_parser.parse_args()
 
@@ -1922,6 +2092,8 @@ def parse_input_type(channel_input_string: str) -> tuple[str, str, str]:
         return channel_url_string, "playlist", ""
 
     # 3. ID avulso de vídeo (exatamente 11 caracteres que batem no regex de ID)
+    if VIDEO_ID_REGEX_PATTERN.match(channel_input_string):
+        return f"https://www.youtube.com/watch?v={channel_input_string}", "video", channel_input_string
 
     # 4. Canal (padrão)
     channel_url_string = channel_input_string if channel_input_string.startswith("http") else f"https://www.youtube.com/{channel_input_string}"
@@ -1961,9 +2133,19 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
             with open(latest_json_path, "r", encoding="utf-8") as file_descriptor:
                 json_data = json.load(file_descriptor)
                 
-            if isinstance(json_data, dict) and "channel" in json_data:
-                cli_args.canal = json_data["channel"]
-            else:
+            if isinstance(json_data, dict):
+                # Prioridade 1: Nova lista de canais
+                if "youtube_channels" in json_data and isinstance(json_data["youtube_channels"], list) and json_data["youtube_channels"]:
+                    cli_args.canal = json_data["youtube_channels"][0] # Padrão: primeiro da lista
+                # Prioridade 2: Campos singulares legacy
+                elif "youtube_channel" in json_data:
+                    cli_args.canal = json_data["youtube_channel"]
+                elif "channel" in json_data:
+                    cli_args.canal = json_data["channel"]
+                elif "channel_context" in json_data:
+                    cli_args.canal = json_data["channel_context"]
+            
+            if not cli_args.canal:
                 match = re.search(r"(?:escriba_|lista_)(.+)\.json", latest_json_path.name)
                 if match:
                     cli_args.canal = f"@{match.group(1)}"
@@ -1980,12 +2162,18 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
 
     # Modo de operação para o header
     md_label = "+MD" if cli_args.md else ""
-    execution_mode_label = "Áudio" if cli_args.audio_only else f"Legendas/SRT{md_label} ({cli_args.lang or 'auto'})"
+    if cli_args.mp3:
+        cli_args.audio_only = True
+        execution_mode_label = "Modo MP3"
+    else:
+        execution_mode_label = "Áudio" if cli_args.audio_only else f"Legendas/SRT{md_label} ({cli_args.lang or 'auto'})"
     if cli_args.date:
         execution_mode_label += f"  ·  a partir de {cli_args.date}"
     if cli_args.fast:
         execution_mode_label += "  ·  rápido"
-    print_header(channel_input_string, VERSION, execution_mode_label)
+    
+    print_info(f"Canal alvo: {BOLD}{channel_input_string}{RESET}")
+    print_info(f"Modo: {execution_mode_label}")
 
     # Mensagem de auto-detecção do canal (depois do header)
     if latest_json_path:
@@ -1997,6 +2185,7 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
         yt_dlp_cmd_list=yt_dlp_cmd_list,
         channel_input_url_or_handle=channel_input_string,
         channel_url=channel_url_string,
+        mp3=cli_args.mp3
     )
 
 def init_auth_and_language(
@@ -2066,6 +2255,8 @@ def process_videos(
     cookie_args_list: list[str],
     language_opt_string: str,
     cli_args: argparse.Namespace,
+    channel_filter: str | None = None,
+    is_first_channel: bool = True,
 ) -> tuple[int, int, int, int]:
     """
     Etapa 3: o coração do script - baixa as legendas.
@@ -2095,11 +2286,21 @@ def process_videos(
     
     # Se descobrimos um uploader/canal novo agora (ex: via playlist), salva no JSON
     if session_config.discovered_uploader_id:
-        save_channel_state_json(json_state_path, full_state_list, channel_handle=session_config.discovered_uploader_id)
+        save_channel_state_json(
+            json_state_path, 
+            full_state_list, 
+            channel_handle=session_config.discovered_uploader_id,
+            youtube_channel=session_config.channel_url
+        )
     
     # Garantir que o idioma detectado esteja no arquivo caso tenha sido descoberto agora
     if language_opt_string and language_opt_string != detected_lang_cached:
-        save_channel_state_json(json_state_path, full_state_list, detected_language=language_opt_string)
+        save_channel_state_json(
+            json_state_path, 
+            full_state_list, 
+            detected_language=language_opt_string,
+            youtube_channel=session_config.channel_url
+        )
     
     # Se o modo for vídeo único, filtramos a lista carregada para focar apenas nele
     if input_type_string == "video" and single_video_id:
@@ -2124,7 +2325,38 @@ def process_videos(
         is_single_video_mode = False
         working_state_list = filter_state_list(full_state_list, cli_args.date)
 
+        # Filtro por canal de origem: em modo multi-canal, processar apenas vídeos deste canal
+        if channel_filter:
+            # Normalizar o filtro para handle (@Canal)
+            _filter_handle = channel_filter
+            if "/@" in _filter_handle:
+                m = re.search(r'/@([A-Za-z0-9_-]+)', _filter_handle)
+                if m: _filter_handle = f"@{m.group(1)}"
+            elif not _filter_handle.startswith("@"):
+                _filter_handle = f"@{_filter_handle}"
+
+            filtered_by_channel = []
+            orphan_videos = []
+            for v in working_state_list:
+                sc = v.get("source_channel", "")
+                if sc == _filter_handle:
+                    filtered_by_channel.append(v)
+                elif not sc:
+                    orphan_videos.append(v)
+                # else: vídeo pertence a outro canal → ignora nesta iteração
+
+            # Órfãos só são processados no primeiro canal da lista
+            if is_first_channel and orphan_videos:
+                print_info(f"Incluindo {BOLD}{len(orphan_videos)}{RESET} vídeo(s) sem canal associado (órfãos) nesta passada.")
+                filtered_by_channel.extend(orphan_videos)
+
+            working_state_list = filtered_by_channel
+            print_info(f"Canal filtrado: {BOLD}{_filter_handle}{RESET} → {len(working_state_list)} vídeo(s) para processar.")
+
     if not working_state_list:
+        if channel_filter:
+            print_info(f"Nenhum vídeo pendente para este canal. {DIM}Avançando...{RESET}")
+            return 0, 0, 0, 0, False
         print_err("Nenhum vídeo retornado pela listagem ou filtro.")
         sys.exit(1)
 
@@ -2154,7 +2386,13 @@ def process_videos(
         """Salva o JSON se o contador atingiu o limite ou se force=True."""
         nonlocal _dirty
         if force or _dirty >= FLUSH_EVERY:
-            save_channel_state_json(json_state_path, full_state_list, detected_language=language_opt_string)
+            save_channel_state_json(
+                json_state_path, 
+                full_state_list, 
+                detected_language=language_opt_string,
+                youtube_channel=session_config.channel_url,
+                channel_handle=session_config.discovered_uploader_id
+            )
             _dirty = 0
 
     pending_md_conversions = []
@@ -2211,6 +2449,7 @@ def process_videos(
                 language_opt_string=language_opt_string,
                 channel_dir_name=session_config.channel_dir_name,
                 audio_only_flag=cli_args.audio_only,
+                mp3_flag=session_config.mp3,
             )
 
             # --- Harvest: Absorver metadados independente do exit code (ex: sem legenda gera erro mas tem info) ---
@@ -2278,6 +2517,7 @@ def process_videos(
                             channel_dir_name=session_config.channel_dir_name,
                             audio_only_flag=True,
                             output_dir_path=fallback_audios_dir_path,
+                            mp3_flag=session_config.mp3,
                         )
                         
                         if audio_fallback_exit_code == 0:
@@ -2382,9 +2622,8 @@ def process_videos(
 
 def print_summary(downloaded_videos_count: int, skipped_videos_count: int, error_videos_count: int, total_videos_count: int) -> None:
     """Etapa 4: imprime o resumo final da sessão."""
-    print(f"\n{DIV_THICK}")
+    print()
     print(f"  {BOLD}{BWHITE}Sessão concluída{RESET}")
-    print(f"{DIV_THICK}")
     print(f"  {ICON_OK}  Baixados   : {BGREEN}{downloaded_videos_count}{RESET}")
     print(f"  {ICON_SKIP}  Pulados    : {DIM}{skipped_videos_count}{RESET}")
     if error_videos_count:
@@ -2428,7 +2667,8 @@ def regen_md_from_srt_files() -> None:
         except Exception:
             pass
 
-    print_header(cwd_path.name, VERSION, "Regeneração MD offline")
+    print_info(f"Canal alvo: {BOLD}{cwd_path.name}{RESET}")
+    print_info(f"Modo: Regeneração MD offline")
 
     total_count = len(srt_files_list)
     converted_count = 0
@@ -2471,14 +2711,12 @@ def regen_md_from_srt_files() -> None:
             print_warn(f"falha ou vazio", "      ")
 
     # Resumo
-    print(f"\n{DIV_THICK}")
+    print()
     print(f"  {BOLD}{BWHITE}Regeneração concluída{RESET}")
-    print(f"{DIV_THICK}")
     print(f"  {ICON_OK}  Convertidos : {BGREEN}{converted_count}{RESET}")
     print(f"  {ICON_SKIP}  Pulados     : {DIM}{skipped_count}{RESET}")
     print(f"  {ICON_INFO}  Total       : {total_count}")
     print()
-
 
 
 # ─── Notion Exporter ─────────────────────────────────────────────────────────
@@ -2634,6 +2872,7 @@ class NotionExporter:
 
 
 def main() -> None:
+    print_header(VERSION)
     cli_args = parse_args()
     
     # Se 'canal' foi passado como lista (nargs='*'), junta tudo.
@@ -2650,6 +2889,11 @@ def main() -> None:
     # Short-circuit: modo offline de regeneração MD
     if cli_args.regen_md:
         regen_md_from_srt_files()
+        return
+
+    # Short-circuit: migração de bancos de dados
+    if cli_args.migrate:
+        migrate_all_databases(Path.cwd())
         return
 
     # --- Modo de Operação Especial: Notion File ---
@@ -2676,16 +2920,97 @@ def main() -> None:
         sys.exit(0)
 
     # --- Fluxo Normal do Script ---
-    session_config = setup_session(cli_args)
-    cookie_args_list, language_opt_string = init_auth_and_language(
-        session_config, cli_args.lang, cli_args.refresh_cookies
-    )
-    downloaded_videos_count, skipped_videos_count, error_videos_count, total_videos_count, was_interrupted = process_videos(
-        session_config, cookie_args_list, language_opt_string, cli_args
-    )
-    print_summary(downloaded_videos_count, skipped_videos_count, error_videos_count, total_videos_count)
-    if was_interrupted:
-        sys.exit(130)
+    
+    # Detectar modo multi-canal: sem argumento explícito + JSON com canais registrados
+    user_provided_canal = cli_args.canal  # Antes de setup_session modificar
+    
+    all_channels_to_sync = []
+    if not user_provided_canal:
+        cwd_path = Path.cwd()
+        latest_json_path = get_latest_json_path(cwd_path)
+        if latest_json_path.exists():
+            try:
+                with open(latest_json_path, "r", encoding="utf-8") as f:
+                    json_data = json.load(f)
+                if isinstance(json_data, dict):
+                    channels_list = json_data.get("youtube_channels", [])
+                    if isinstance(channels_list, list) and len(channels_list) >= 1:
+                        all_channels_to_sync = list(channels_list)
+            except Exception:
+                pass
+
+    if all_channels_to_sync:
+        # === MODO CANAL REGISTRADO ===
+        is_multi = len(all_channels_to_sync) > 1
+        if is_multi:
+            print_section("Sincronização Multi-Canal")
+            print_info(f"Detectados {BOLD}{len(all_channels_to_sync)}{RESET} canais registrados nesta pasta.")
+        else:
+            print_section("Sincronização de Canal")
+            print_info(f"Canal registrado: {BOLD}{all_channels_to_sync[0]}{RESET}")
+        for i, ch in enumerate(all_channels_to_sync, 1):
+            print_info(f"  {BOLD}{i}.{RESET} {ch}")
+        print()
+
+        total_dl = 0
+        total_skip = 0
+        total_err = 0
+        total_vids = 0
+        was_interrupted = False
+
+        for idx, channel_handle in enumerate(all_channels_to_sync, 1):
+            is_first_channel = (idx == 1)
+            print_section(f"Canal {idx}/{len(all_channels_to_sync)}: {channel_handle}")
+            
+            # Resetar o argumento canal para cada iteração
+            cli_args.canal = channel_handle
+            
+            try:
+                session_config = setup_session(cli_args)
+                cookie_args_list, language_opt_string = init_auth_and_language(
+                    session_config, cli_args.lang, cli_args.refresh_cookies
+                )
+                dl, sk, er, tot, interrupted = process_videos(
+                    session_config, cookie_args_list, language_opt_string, cli_args,
+                    channel_filter=channel_handle if is_multi else None,
+                    is_first_channel=is_first_channel,
+                )
+                total_dl += dl
+                total_skip += sk
+                total_err += er
+                total_vids += tot
+                
+                if interrupted:
+                    was_interrupted = True
+                    break
+            except Exception as e:
+                print_err(f"Erro ao processar canal {channel_handle}: {e}")
+                continue
+
+        # Verificação explícita: não há mais canais a processar
+        print()
+        print_info(f"Todos os {BOLD}{len(all_channels_to_sync)}{RESET} canal(is) verificados. Nenhum canal pendente.")
+
+        if is_multi:
+            print_section("Resumo Multi-Canal")
+        else:
+            print_section("Resumo")
+        print_summary(total_dl, total_skip, total_err, total_vids)
+        if was_interrupted:
+            sys.exit(130)
+    else:
+        # === MODO SEM CANAL REGISTRADO (padrão / primeira execução) ===
+        session_config = setup_session(cli_args)
+        cookie_args_list, language_opt_string = init_auth_and_language(
+            session_config, cli_args.lang, cli_args.refresh_cookies
+        )
+        downloaded_videos_count, skipped_videos_count, error_videos_count, total_videos_count, was_interrupted = process_videos(
+            session_config, cookie_args_list, language_opt_string, cli_args
+        )
+        print_summary(downloaded_videos_count, skipped_videos_count, error_videos_count, total_videos_count)
+        if was_interrupted:
+            sys.exit(130)
+
 
 
 if __name__ == "__main__":
