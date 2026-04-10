@@ -3,8 +3,9 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Versão-2.4.4-blue?style=for-the-badge" alt="Versão">
+  <img src="https://img.shields.io/badge/Versão-2.4.6-blue?style=for-the-badge" alt="Versão">
   <img src="https://img.shields.io/badge/Python-3.13+-ffd343?style=for-the-badge&logo=python&logoColor=black" alt="Python">
+  <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/Licença-MIT-green?style=for-the-badge" alt="Licença">
   <img src="https://img.shields.io/badge/Target-NotebookLM-6f42c1?style=for-the-badge&logo=google" alt="NotebookLM">
 </p>
@@ -12,7 +13,7 @@
 # Escriba
 ### O Orquestrador de Inteligência para YouTube
 
-**Escriba** é um pipeline de engenharia de dados e NLP (Processamento de Linguagem Natural) de alta performance, projetado para converter canais inteiros do YouTube em bases de conhecimento locais, estruturadas e prontas para consumo por IAs como o **NotebookLM**.
+**Escriba** é um pipeline de extração, higienização via LLM e estruturação de dados não estruturados de vídeo para bases de conhecimento (RAG/NotebookLM).
 
 Diferente de simples scripts de download, o Escriba atua como um **Escriba Digital**: ele não apenas "baixa" o conteúdo, ele o interpreta, deduplica roll-ups de legendas automáticas e segmenta semanticamente os tópicos para criar documentos `.md` de altíssima fidelidade.
 
@@ -37,11 +38,40 @@ Diferente de simples scripts de download, o Escriba atua como um **Escriba Digit
 
 ---
 
+## 🏗️ Arquitetura do Sistema
+
+O fluxo de processamento do Escriba transforma conteúdo audiovisual bruto em documentos semânticos estruturados:
+
+```mermaid
+graph LR
+    A[YouTube / Video] --> B{Processamento}
+    subgraph B [Escriba Pipeline]
+        B1[Extração de Metadados]
+        B2[Higienização via LLM/NLP]
+        B3[Deduplicação de Roll-ups]
+    end
+    B --> C[Markdown Estruturado]
+    C --> D[(Bases de Conhecimento / RAG)]
+```
+
+---
+
 ## 🚀 Instalação
 
-O Escriba é otimizado para **macOS**, mas roda perfeitamente em Linux e Windows.
+O Escriba é otimizado para **macOS**, mas roda perfeitamente em Linux, Windows e **Docker**.
 
-### Configuração (Unix/macOS)
+### Opção 1: Via Docker (Recomendado)
+A maneira mais rápida de rodar o Escriba com todas as dependências isoladas.
+
+```bash
+# 1. Build da Imagem
+docker build -t escriba .
+
+# 2. Execução (Monte o volume para preservar o cache e os arquivos)
+docker run --rm -v "$(pwd):/app" escriba @CanalExemplo
+```
+
+### Opção 2: Configuração Local (Unix/macOS)
 
 ```bash
 # 1. Clone e acesse o diretório
@@ -52,12 +82,11 @@ python3 -m venv .venv
 ./.venv/bin/python3 -m pip install -r requirements.txt
 
 # 3. Use o script diretamente
-# O Escriba agora detecta e usa o .venv automaticamente se estiver na pasta!
 python3 escriba.py @Canal
 ```
 
 > [!TIP]
-> **Auto-Venv**: O script possui lógica interna para se re-executar no ambiente virtual local se detectado, garantindo que todas as dependências estejam sempre corretas sem que você precise ativar o ambiente manualmente.
+> **Auto-Venv**: O script possui lógica interna para se re-executar no ambiente virtual local se detectado!
 
 ---
 
@@ -65,36 +94,15 @@ python3 escriba.py @Canal
 
 O Escriba possui um motor de limpeza de termos dinâmico (padrão Ekklezia). Você pode personalizar como palavras específicas são tratadas criando um arquivo `rules.txt`:
 
-1.  **Global**: `/Users/jandirp/scripts/escriba/rules.txt` (regras para todas as execuções).
+1.  **Global**: `/Users/jandirp/scripts/escriba/rules.txt`
 2.  **Local**: `./rules.txt` (regras específicas para a pasta/projeto atual).
 
 **Formato do arquivo:**
 ```text
-# Comentários são permitidos
 Termo Original, Termo Corrigido
 PalavraAntiga = PalavraNova
 Shabat, Shabbat
 Ceu, Céu
-```
-As regras locais têm precedência sobre as globais.
-
----
-
-### Configuração (Windows)
-
-```powershell
-# 1. Clone e acesse o diretório
-cd escriba
-
-# 2. Crie e prepare o ambiente virtual
-python -m venv .venv
-.\.venv\Scripts\activate
-pip install yt-dlp python-dotenv scikit-learn nltk numpy pysrt
-
-# 3. Crie o comando global (Opcional - PowerShell)
-# Execute para adicionar o alias ao seu perfil do PowerShell
-$EscribaDir = Get-Location
-Add-Content -Path $PROFILE -Value "function escriba { & '$EscribaDir\.venv\Scripts\python.exe' '$EscribaDir\escriba.py' `$args }"
 ```
 
 ---
@@ -107,7 +115,7 @@ O Escriba aceita Handles (`@Canal`), URLs completas ou IDs de vídeos únicos.
 # Sincronização Incremental (Padrão: mapeia canal, extrai subs e gera MD)
 escriba @FilipeDeschamps
 
-# Modo Cirúrgico: Apenas áudio de um vídeo específico
+# Modo Áudio: Baixa MP3 de um vídeo específico
 escriba -a https://youtu.be/dQw4w9WgXcQ
 
 # Histórico Retroativo: Baixar apenas vídeos a partir de uma data
@@ -120,10 +128,10 @@ escriba --regen-md
 ### Flags de Poder
 | Opção | Propósito |
 |---|---|
-| `-l, --lang` | Força o idioma (ex: `pt`, `en`) caso haja alguma falha na detecção automática. |
-| `--audio-fallback`| Baixa o áudio caso não existam legendas disponíveis. |
-| `-rc, --refresh` | Purga o cache de cookies e extrai novos do Chrome. |
-| `-f, --fast` | **Modo Turbo**: Remove o delay entre requisições. O delay foi implementado para evitar bloqueios do YouTube. |
+| `-l, --lang` | Força o idioma (ex: `pt`, `en`). |
+| `-a, --mp3` | Baixa o áudio convertido em MP3. |
+| `-rc, --refresh-cookies` | Purga o cache de cookies e extrai novos do Chrome. |
+| `-f, --fast` | **Modo Turbo**: Remove o delay entre requisições. |
 | `--no-md` | Pula o motor de IA e preserva apenas o arquivo bruto. |
 
 ---
@@ -133,17 +141,17 @@ escriba --regen-md
 O Escriba implementa um pipeline proprietário de **Engenharia de Tópicos** para garantir que a transcrição seja legível por humanos e útil para LLMs.
 
 ### O Pipeline de Processamento
-1.  **Janelas Adaptativas**: O tamanho da análise varia conforme a duração do vídeo (30s a 90s).
+1.  **Janelas Adaptativas**: O tamanho da análise varia conforme a duração do vídeo.
 2.  **Vetorização TF-IDF**: Cada janela é convertida em um vetor de importância léxica.
-3.  **Cosine Similarity**: Detecta vales de similaridade entre janelas para identificar quebras de tópico.
-4.  **Deduplicação Dinâmica**: Remove o comportamento de "roll-up" (repetição de linhas) das legendas automáticas.
-5.  **Dicionário de Marcadores Orais**: Filtra ruídos como "né", "tipo", "basically" que poluem a semântica.
-6.  **Sanitização Estrutural**: Limpeza automática de artefatos HTML e formatações indesejadas na geração dos arquivos finais.
+3.  **Cosine Similarity**: Detecta vales de similaridade para identificar quebras de tópico.
+4.  **Deduplicação Dinâmica**: Remove o comportamento de "roll-up" das legendas automáticas.
+5.  **Dicionário de Marcadores Orais**: Filtra ruídos como "né", "tipo", "basically".
+6.  **Sanitização Estrutural**: Limpeza automática de artefatos HTML.
 
 ---
 
 ## 🏛️ Sobre o Escriba
-Ferramenta desenvolvida para capacitar estudantes e profissionais a dominar grandes volumes de informação. O Escriba é o guardião da memória digital, garantindo que nenhum insight se perca na imensidão do algoritmo do YouTube.
+Ferramenta desenvolvida para capacitar estudantes e profissionais a dominar grandes volumes de informação. O Escriba é o guardião da memória digital.
 
 ---
 

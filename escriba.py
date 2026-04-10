@@ -69,7 +69,7 @@ import requests
 
 from collections import Counter
 
-VERSION = "2.4.5"
+VERSION = "2.4.6"
 
 _script_dir = Path(__file__).parent.resolve()
 
@@ -210,7 +210,7 @@ ICON_INFO = f"{BLUE}•{RESET}"   # informação
 # ─── Utilitários de Layout ────────────────────────────────────────────────────
 
 
-def _print_formatted(icon: str, message: str, indentation_prefix: str = "  ", end_char: str = "\n") -> None:
+def _print_formatted(icon: str, message: str, indentation_prefix: str = "", end_char: str = "\n") -> None:
     """
     Print genérico com ícone e indentação customizável.
     
@@ -223,31 +223,31 @@ def _print_formatted(icon: str, message: str, indentation_prefix: str = "  ", en
     O flush=True é importante para que a mensagem apareça imediatamente,
     especialmente quando usamos \r (carriage return) para atualizar linhas.
     """
-    print(f"{indentation_prefix} {icon}  {message}", end=end_char, flush=True)
+    print(f"{indentation_prefix}{icon}  {message}", end=end_char, flush=True)
 
 
-def print_ok(message: str, indentation_prefix: str = "  ")  -> None: _print_formatted(ICON_OK,   f"{GREEN}{message}{RESET}", indentation_prefix)
-def print_err(message: str, indentation_prefix: str = "  ") -> None: _print_formatted(ICON_ERR,  f"{BRED}{message}{RESET}", indentation_prefix)
-def print_warn(message: str, indentation_prefix: str = "  ")-> None: _print_formatted(ICON_WARN, f"{YELLOW}{message}{RESET}", indentation_prefix)
-def print_info(message: str, indentation_prefix: str = "  ")-> None: _print_formatted(ICON_INFO, f"{DIM}{message}{RESET}", indentation_prefix)
-def print_skip(message: str, indentation_prefix: str = "  ")-> None: _print_formatted(ICON_SKIP, f"{DIM}{message}{RESET}", indentation_prefix)
-def print_dl(message: str, indentation_prefix: str = "  ")  -> None: _print_formatted(ICON_DL,   f"{BCYAN}{message}{RESET}", indentation_prefix)
+def print_ok(message: str, indentation_prefix: str = "")  -> None: _print_formatted(ICON_OK,   f"{GREEN}{message}{RESET}", indentation_prefix)
+def print_err(message: str, indentation_prefix: str = "") -> None: _print_formatted(ICON_ERR,  f"{BRED}{message}{RESET}", indentation_prefix)
+def print_warn(message: str, indentation_prefix: str = "")-> None: _print_formatted(ICON_WARN, f"{YELLOW}{message}{RESET}", indentation_prefix)
+def print_info(message: str, indentation_prefix: str = "")-> None: _print_formatted(ICON_INFO, f"{DIM}{message}{RESET}", indentation_prefix)
+def print_skip(message: str, indentation_prefix: str = "")-> None: _print_formatted(ICON_SKIP, f"{DIM}{message}{RESET}", indentation_prefix)
+def print_dl(message: str, indentation_prefix: str = "")  -> None: _print_formatted(ICON_DL,   f"{BCYAN}{message}{RESET}", indentation_prefix)
 
 
 def print_section(section_title: str) -> None:
     """Imprime um separador de seção com título."""
     print()
-    print(f"  {BOLD}{BWHITE}{section_title}{RESET}")
+    print(f"{BOLD}{BWHITE}{section_title}{RESET}")
     print()
 
 
 def print_header(script_version: str) -> None:
     """Header principal em texto mostrando nome e versão."""
     print()
-    print(f"  {BOLD}{BCYAN}Escriba v{script_version}{RESET}")
+    print(f"{BOLD}{BCYAN}Escriba v{script_version}{RESET}")
     print()
 
-def print_countdown(seconds_count: int, message: str, indentation_prefix: str = "  ") -> None:
+def print_countdown(seconds_count: int, message: str, indentation_prefix: str = "") -> None:
     """
     Contagem regressiva com barra visual inline.
     
@@ -263,7 +263,7 @@ def print_countdown(seconds_count: int, message: str, indentation_prefix: str = 
             filled_blocks  = int((seconds_count - remaining_seconds) / seconds_count * visual_bar_width) if seconds_count else visual_bar_width
             progress_bar_str = f"{GREEN}{'█' * filled_blocks}{DIM}{'░' * (visual_bar_width - filled_blocks)}{RESET}"
             progress_percentage = int((seconds_count - remaining_seconds) / seconds_count * 100) if seconds_count else 100
-            sys.stdout.write(f"\r{indentation_prefix} {ICON_WAIT}  {message} [{progress_bar_str}] {progress_percentage:>3}%  {DIM}{remaining_seconds}s{RESET}  \x1b[K")
+            sys.stdout.write(f"\r{indentation_prefix}{ICON_WAIT}  {message} [{progress_bar_str}] {progress_percentage:>3}%  {DIM}{remaining_seconds}s{RESET}  \x1b[K")
             sys.stdout.flush()
             if remaining_seconds > 0:
                 time.sleep(1)
@@ -594,7 +594,7 @@ def generate_fast_list_json(
 
                 raw_video_list.append({"id": video_id, "title": title, "publish_date": publish_date})
                 sys.stdout.write(
-                    f"\r  {ICON_WAIT}  {BCYAN}IDs encontrados: {len(raw_video_list)}{RESET}"
+                    f"\r{ICON_WAIT}  {BCYAN}IDs encontrados: {len(raw_video_list)}{RESET}"
                 )
                 sys.stdout.flush()
             except Exception:
@@ -767,7 +767,7 @@ def load_or_create_channel_state(
     cookie_args_list: list[str], 
     channel_url: str,
     only_peek_lang: bool = False
-) -> tuple[Path | None, list[dict], str | None]:
+) -> tuple[Path | None, list[dict], str | None, int]:
     """
     Carrega ou cria o banco de dados JSON do canal.
     
@@ -905,7 +905,7 @@ def load_or_create_channel_state(
         except Exception: pass
 
     if only_peek_lang:
-        return json_path, [], detected_lang_cached
+        return json_path, [], detected_lang_cached, 0
 
     # 1. Carregar lista mestre do JSON alvo (se existir) para garantir preservação total
     state_map: dict[str, dict] = {}
@@ -919,16 +919,13 @@ def load_or_create_channel_state(
                         vid_id = v.get("video_id") or v.get("id")
                         if vid_id:
                             state_map[vid_id] = v
-            if state_map:
-                print_info(f"Base carregada: {BOLD}{len(state_map)}{RESET} vídeos preservados do banco de dados.")
         except Exception: pass
 
-    # 2. Já carregamos history_map lá no início para identificação de canal
-    
     # 3. Buscar os vídeos da URL atual
     current_videos_list = generate_fast_list_json(yt_dlp_cmd_list, cookie_args_list, channel_url, local_history_map=history_map)
+    
     if not current_videos_list and not state_map:
-        return None, [], detected_lang_cached
+        return None, [], detected_lang_cached, 0
 
     # 4. Integrar novos vídeos descobertos
     new_videos_count = 0
@@ -945,6 +942,18 @@ def load_or_create_channel_state(
         source_channel_tag = target_uploader_id if target_uploader_id.startswith("@") else f"@{target_uploader_id}"
     elif channel_name_safe and channel_name_safe not in ("canal",):
         source_channel_tag = f"@{channel_name_safe}"
+
+    # Agora que temos o source_channel_tag, reportamos quantos vídeos deste canal já temos no banco
+    if state_map and source_channel_tag:
+        db_channel_count = sum(1 for v in state_map.values() if v.get("source_channel") == source_channel_tag)
+        if db_channel_count > 0:
+            print_info(f"Base carregada: {BOLD}{db_channel_count}{RESET} vídeo(s) do canal {BOLD}{source_channel_tag}{RESET} preservados.")
+        else:
+            # Se for zero, talvez seja a primeira vez que estamos processando este canal nesta pasta consolidada
+            # ou o uploader ainda não foi associado. Mostramos o total apenas se não houver tag.
+            total_db = len(state_map)
+            if total_db > 0:
+                print_info(f"Base carregada: {BOLD}{total_db}{RESET} vídeos totais no banco. Nenhuma entrada prévia para {source_channel_tag}.")
 
     # Se ainda não temos os IDs de canal/uploader, tenta pegar do primeiro vídeo da lista atual
     if not target_channel_id and not target_uploader_id and current_videos_list:
@@ -1030,7 +1039,7 @@ def load_or_create_channel_state(
     if imported_count > 0:
         print_ok(f"Importados {BOLD}{imported_count}{RESET} vídeos do histórico local.")
 
-    return json_path, final_results_list, detected_lang_cached
+    return json_path, final_results_list, detected_lang_cached, len(current_videos_list)
 
 
 def save_channel_state_json(json_path: Path | None, videos_list: list[dict], channel_handle: str | None = None, detected_language: str | None = None, youtube_channel: str | None = None):
@@ -2011,9 +2020,9 @@ def parse_args() -> argparse.Namespace:
     cli_parser.add_argument("canal", nargs="*", default=None, help="Canal, playlist, vídeo ou URL (ex: @Canal, VIDEO_ID, URL de vídeo/playlist)")
     cli_parser.add_argument("-l", "--lang", default="", metavar="LANG",
                         help="Idioma das legendas (ex: pt, en). Padrão: idioma nativo do canal")
-    cli_parser.add_argument("-a", "--audio-only", action="store_true",
+    cli_parser.add_argument("--audio-only", action="store_true",
                         help="Baixa APENAS o áudio do vídeo (formato nativo webm/opus)")
-    cli_parser.add_argument("--mp3", action="store_true",
+    cli_parser.add_argument("-a", "--mp3", action="store_true",
                         help="Converte o áudio para MP3 (ativa modo áudio automaticamente)")
     cli_parser.add_argument("-m", "--md", action="store_true", default=True,
                         help="Exporta legendas em .md segmentado por IA via TF-IDF (Padrão: Ativo)")
@@ -2214,7 +2223,7 @@ def init_auth_and_language(
 
     print_section("Idioma")
     # Tenta obter cache antes de detectar
-    _, _, cached_lang = load_or_create_channel_state(
+    _, _, cached_lang, _ = load_or_create_channel_state(
         session_config.cwd_path, session_config.yt_dlp_cmd_list, cookie_args_list, session_config.channel_url,
         only_peek_lang=True
     )
@@ -2257,7 +2266,7 @@ def process_videos(
     cli_args: argparse.Namespace,
     channel_filter: str | None = None,
     is_first_channel: bool = True,
-) -> tuple[int, int, int, int]:
+) -> tuple[int, int, int, int, int, bool]:
     """
     Etapa 3: o coração do script - baixa as legendas.
     
@@ -2274,15 +2283,19 @@ def process_videos(
     3. No final, converte todas as legendas pendentes para MD
     
     Retorna contadores para o resumo final:
-    (baixados, pulados, erros, total)
+    (baixados, pulados, erros, fila, canal_total, interrompido)
     """
     # Detectar se é vídeo avulso
     _, input_type_string, single_video_id = parse_input_type(session_config.channel_input_url_or_handle)
     
     print_section("Listagem de Vídeos e Tracking State")
-    json_state_path, full_state_list, detected_lang_cached = load_or_create_channel_state(
+    json_state_path, full_state_list, detected_lang_cached, channel_total = load_or_create_channel_state(
         session_config.cwd_path, session_config.yt_dlp_cmd_list, cookie_args_list, session_config.channel_url
     )
+    
+    # Persistência imediata: se novos vídeos foram descobertos, salva logo no início
+    if json_state_path:
+        save_channel_state_json(json_state_path, full_state_list, detected_language=detected_lang_cached, youtube_channel=session_config.channel_url)
     
     # Se descobrimos um uploader/canal novo agora (ex: via playlist), salva no JSON
     if session_config.discovered_uploader_id:
@@ -2356,7 +2369,7 @@ def process_videos(
     if not working_state_list:
         if channel_filter:
             print_info(f"Nenhum vídeo pendente para este canal. {DIM}Avançando...{RESET}")
-            return 0, 0, 0, 0, False
+            return 0, 0, 0, 0, channel_total, False
         print_err("Nenhum vídeo retornado pela listagem ou filtro.")
         sys.exit(1)
 
@@ -2617,10 +2630,10 @@ def process_videos(
             if not cli_args.keep_srt and srt_path.exists():
                 srt_path.unlink()
 
-    return downloaded_videos_count, skipped_videos_count, error_videos_count, total_videos_count, was_interrupted
+    return downloaded_videos_count, skipped_videos_count, error_videos_count, total_videos_count, channel_total, was_interrupted
 
 
-def print_summary(downloaded_videos_count: int, skipped_videos_count: int, error_videos_count: int, total_videos_count: int) -> None:
+def print_summary(downloaded_videos_count: int, skipped_videos_count: int, error_videos_count: int, total_videos_count: int, channel_total_count: int = 0) -> None:
     """Etapa 4: imprime o resumo final da sessão."""
     print()
     print(f"  {BOLD}{BWHITE}Sessão concluída{RESET}")
@@ -2628,6 +2641,10 @@ def print_summary(downloaded_videos_count: int, skipped_videos_count: int, error
     print(f"  {ICON_SKIP}  Pulados    : {DIM}{skipped_videos_count}{RESET}")
     if error_videos_count:
         print(f"  {ICON_ERR}  Erros      : {BRED}{error_videos_count}{RESET}")
+    
+    if channel_total_count > 0:
+        print(f"  {ICON_INFO}  No canal   : {channel_total_count}")
+    
     print(f"  {ICON_INFO}  Total fila : {total_videos_count}")
     print()
 
@@ -2956,6 +2973,7 @@ def main() -> None:
         total_skip = 0
         total_err = 0
         total_vids = 0
+        total_chan_vids = 0
         was_interrupted = False
 
         for idx, channel_handle in enumerate(all_channels_to_sync, 1):
@@ -2970,7 +2988,7 @@ def main() -> None:
                 cookie_args_list, language_opt_string = init_auth_and_language(
                     session_config, cli_args.lang, cli_args.refresh_cookies
                 )
-                dl, sk, er, tot, interrupted = process_videos(
+                dl, sk, er, tot, chan_tot, interrupted = process_videos(
                     session_config, cookie_args_list, language_opt_string, cli_args,
                     channel_filter=channel_handle if is_multi else None,
                     is_first_channel=is_first_channel,
@@ -2979,6 +2997,7 @@ def main() -> None:
                 total_skip += sk
                 total_err += er
                 total_vids += tot
+                total_chan_vids += chan_tot
                 
                 if interrupted:
                     was_interrupted = True
@@ -2995,7 +3014,7 @@ def main() -> None:
             print_section("Resumo Multi-Canal")
         else:
             print_section("Resumo")
-        print_summary(total_dl, total_skip, total_err, total_vids)
+        print_summary(total_dl, total_skip, total_err, total_vids, total_chan_vids)
         if was_interrupted:
             sys.exit(130)
     else:
@@ -3004,10 +3023,10 @@ def main() -> None:
         cookie_args_list, language_opt_string = init_auth_and_language(
             session_config, cli_args.lang, cli_args.refresh_cookies
         )
-        downloaded_videos_count, skipped_videos_count, error_videos_count, total_videos_count, was_interrupted = process_videos(
+        downloaded_videos_count, skipped_videos_count, error_videos_count, total_videos_count, chan_tot, was_interrupted = process_videos(
             session_config, cookie_args_list, language_opt_string, cli_args
         )
-        print_summary(downloaded_videos_count, skipped_videos_count, error_videos_count, total_videos_count)
+        print_summary(downloaded_videos_count, skipped_videos_count, error_videos_count, total_videos_count, chan_tot)
         if was_interrupted:
             sys.exit(130)
 
