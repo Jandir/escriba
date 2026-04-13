@@ -3,19 +3,26 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Versão-2.4.6-blue?style=for-the-badge" alt="Versão">
+  <img src="https://img.shields.io/badge/Versão-2.4.7-blue?style=for-the-badge" alt="Versão">
   <img src="https://img.shields.io/badge/Python-3.13+-ffd343?style=for-the-badge&logo=python&logoColor=black" alt="Python">
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/Licença-MIT-green?style=for-the-badge" alt="Licença">
   <img src="https://img.shields.io/badge/Target-NotebookLM-6f42c1?style=for-the-badge&logo=google" alt="NotebookLM">
 </p>
 
-# Escriba
+# Escriba: Video-to-Knowledge ETL Pipeline
 ### O Orquestrador de Inteligência para YouTube
 
 **Escriba** é um pipeline de extração, higienização via LLM e estruturação de dados não estruturados de vídeo para bases de conhecimento (RAG/NotebookLM).
 
 Diferente de simples scripts de download, o Escriba atua como um **Escriba Digital**: ele não apenas "baixa" o conteúdo, ele o interpreta, deduplica roll-ups de legendas automáticas e segmenta semanticamente os tópicos para criar documentos `.md` de altíssima fidelidade.
+
+Ativos de vídeo corporativo (como treinamentos, conferências e reuniões) frequentemente se tornam "dados mortos" devido à dificuldade de busca e consulta. O Escriba resolve este gargalo de negócios ao automatizar a extração de transcrições, aplicar processos de higienização semântica e gerar documentos Markdown hierarquizados.
+
+O output final é uma base de conhecimento limpa e otimizada, pronta para:
+* Alimentar ferramentas de IA generativa e assistentes virtuais (como o Google NotebookLM).
+* Integrar arquiteturas RAG (Retrieval-Augmented Generation) locais ou em nuvem.
+* Reduzir drasticamente os custos e o tempo operacional gastos com curadoria manual de conteúdo.
 
 ---
 
@@ -54,6 +61,13 @@ graph LR
     C --> D[(Bases de Conhecimento / RAG)]
 ```
 
+### 🧱 Modularidade (Developer-Friendly)
+O núcleo foi refatorado para seguir padrões rigorosos de qualidade Python (PEP 8):
+*   `youtube.py`: Abstração de rede e orquestração do `yt-dlp`.
+*   `history.py`: Gestão de estado atômico e persistência JSON.
+*   `rules.py`: Motor de limpeza léxica e processamento de regras.
+*   `utils.py`: Sistema de design CLI e utilitários auxiliares.
+
 ---
 
 ## 🚀 Instalação
@@ -88,11 +102,18 @@ python3 escriba.py @Canal
 > [!TIP]
 > **Auto-Venv**: O script possui lógica interna para se re-executar no ambiente virtual local se detectado!
 
+### 🧪 Testes Unitários
+Para garantir a integridade das regras de limpeza e do banco de dados:
+```bash
+# Executa todos os testes unitários
+./.venv/bin/pytest tests/
+```
+
 ---
 
 ## 🖋️ Customização de Termos (rules.txt)
 
-O Escriba possui um motor de limpeza de termos dinâmico (padrão Ekklezia). Você pode personalizar como palavras específicas são tratadas criando um arquivo `rules.txt`:
+O Escriba possui um motor de limpeza de termos dinâmico. Você pode personalizar como palavras específicas são tratadas criando um arquivo `rules.txt`:
 
 1.  **Global**: `/Users/jandirp/scripts/escriba/rules.txt`
 2.  **Local**: `./rules.txt` (regras específicas para a pasta/projeto atual).
