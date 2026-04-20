@@ -63,10 +63,11 @@ import functools
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils import print_ok, print_err, print_warn, print_info, print_skip, print_dl, print_section, print_header, print_countdown, BOLD, RESET, DIM, GREEN, RED, YELLOW, BLUE, WHITE, BCYAN, BWHITE, BRED, BGREEN, BYELLW, ICON_OK, ICON_ERR, ICON_WARN, ICON_SKIP, ICON_DL, ICON_WAIT, ICON_INFO
 from rules import clean_ekklezia_terms
-from history import get_latest_json_path, load_all_local_history, save_channel_state_json, auto_migrate_legacy_files, migrate_all_databases, filter_state_list
-from youtube import setup_environment, configure_cookies, filter_youtube_cookies, detect_language, get_video_exact_date, generate_fast_list_json
+from history import get_latest_json_path, load_all_local_history, save_channel_state_json, auto_migrate_legacy_files, migrate_all_databases, filter_state_list, register_channel_in_json
+from youtube import setup_environment, configure_cookies, filter_youtube_cookies, detect_language, get_video_exact_date, generate_fast_list_json, download_video
 from datetime import datetime
 from dataclasses import dataclass
+from lexis import consolidate_by_channel
 
 from typing import Optional
 from dotenv import load_dotenv
@@ -74,7 +75,7 @@ import requests
 
 from collections import Counter
 
-VERSION = "2.4.7"
+VERSION = "2.5.0"
 
 _script_dir = Path(__file__).parent.resolve()
 
@@ -89,6 +90,15 @@ class SessionConfig:
     channel_url: str
     mp3: bool = False
     discovered_uploader_id: Optional[str] = None
+
+
+@dataclass
+class DownloadConfig:
+    """Configurações para download de um vídeo específico."""
+    language: str  # Idioma das legendas
+    audio_only: bool = False  # Baixar apenas áudio
+    output_dir: Path | None = None  # Diretório customizado
+    keep_srt: bool = False  # Manter .srt após converter para .md
 
 # Carrega variáveis do .env (localizado no diretório do script)
 load_dotenv(Path(__file__).parent / ".env")
@@ -239,7 +249,10 @@ def load_or_create_channel_state(
                 data = json.load(fd)
                 if isinstance(data, dict):
                     detected_lang_cached = data.get("detected_language")
-        except Exception: pass
+        except (json.JSONDecodeError, KeyError) as e:
+            print_warn(f"Idioma_CACHE: JSON inválido ignorado ({json_path.name})")
+        except OSError as e:
+            print_warn(f"Idioma_CACHE: Arquivo não encontrado ({json_path.name})")
 
     if only_peek_lang:
         return json_path, [], detected_lang_cached, 0
@@ -256,7 +269,10 @@ def load_or_create_channel_state(
                         vid_id = v.get("video_id") or v.get("id")
                         if vid_id:
                             state_map[vid_id] = v
-        except Exception: pass
+        except (json.JSONDecodeError, KeyError) as e:
+            print_warn(f"Estado: JSON ignorado ({json_path.name})")
+        except OSError as e:
+            print_warn(f"Estado: Erro ao ler ({json_path.name})")
 
     # 3. Buscar os vídeos da URL atual
     current_videos_list = generate_fast_list_json(yt_dlp_cmd_list, cookie_args_list, channel_url, local_history_map=history_map)
@@ -368,6 +384,15 @@ def load_or_create_channel_state(
     
     if orphan_resolved > 0:
         print_info(f"Associados {BOLD}{orphan_resolved}{RESET} vídeos órfãos a canais via metadados locais.")
+
+    # 6. Auto-Cura (Remoção de Fantasmas): Remove IDs corrompidos pelo bug antigo do Regex
+    # Ex: se o nome da pasta é "braveco", exclui qualquer ID salvo como "braveco-3ih"
+    corrupted_prefix = f"{folder_name}-"
+    if any(k.startswith(corrupted_prefix) for k in state_map.keys()):
+        cleaned_map = {k: v for k, v in state_map.items() if not k.startswith(corrupted_prefix)}
+        ghosts_count = len(state_map) - len(cleaned_map)
+        print_ok(f"Limpeza Automática: Removidos {BOLD}{ghosts_count}{RESET} IDs fantasmas do banco de dados (Bug 2.4.x).")
+        state_map = cleaned_map
 
     final_results_list = list(state_map.values())
     
@@ -625,15 +650,52 @@ def srt_to_md(
         if seg_windows:
             segments.append((seg_windows[0]['timestamp'], len(segments) + 1, seg_windows))
 
+        # ── Fallback: Segmentação Uniforme por Tempo ───────────────────────────
+        # Quando o TF-IDF produz segmentos insuficientes para a duração do vídeo
+        # (conteúdo monotopíco, vocabulário limitado, ou voz pausada com janelas
+        # de alta similaridade), redistribuímos as janelas em chunks uniformes.
+        #
+        # Condição: vídeo tem janelas suficientes para min_segments, mas o
+        # TF-IDF não detectou quebras suficientes.
+        if len(segments) < min_segments and len(windows) >= min_segments:
+            chunk_size = max(1, len(windows) // min_segments)
+            uniform_break_indices = set(range(0, len(windows), chunk_size))
+
+            segments = []
+            seg_windows = []
+            for i, window in enumerate(windows):
+                if i in uniform_break_indices and seg_windows:
+                    segments.append((seg_windows[0]['timestamp'], len(segments) + 1, seg_windows))
+                    seg_windows = []
+                seg_windows.append(window)
+            if seg_windows:
+                segments.append((seg_windows[0]['timestamp'], len(segments) + 1, seg_windows))
+
         # ── Fase 4: Metadados de cabeçalho ────────────────────────────────────
         duration_str = str(subs[-1].end).split(',')[0]
         video_url = f"https://youtube.com/watch?v={video_id}"
 
+        # Extrai o código de idioma do nome do arquivo (ex: canal-ID-pt.srt → "pt")
+        _lang_hdr_match = re.search(r"-([a-z]{2}(?:-[A-Z]{2})?)\.srt$", srt_path.name)
+        lang_hdr = _lang_hdr_match.group(1) if _lang_hdr_match else lang_code
+
+        # Cabeçalho YAML frontmatter: lido por Obsidian, parsers de RAG e pelo Lexis
+        # Permite que o NotebookLM indexe metadados estruturados por documento
         md_lines = [
-            f"## {video_title}\n",
-            f"**URL:** {video_url}  \n",
-            f"**Data:** {video_date}  \n",
-            f"**Duração:** {duration_str}\n",
+            f"---\n",
+            f"title: \"{video_title}\"\n",
+            f"video_id: \"{video_id}\"\n",
+            f"url: \"{video_url}\"\n",
+            f"date: \"{video_date}\"\n",
+            f"duration: \"{duration_str}\"\n",
+            f"language: \"{lang_hdr}\"\n",
+            f"source: \"Escriba v{VERSION}\"\n",
+            f"---\n",
+            "\n",
+            f"# {video_title}\n",
+            "\n",
+            f"> **Data:** {video_date} · **Duração:** {duration_str} · **Idioma:** {lang_hdr}  \n",
+            f"> 🔗 [{video_url}]({video_url})\n",
             "\n",
         ]
 
@@ -747,7 +809,6 @@ def srt_to_md(
                 out.append(f"[{para_ts}] {clean_ekklezia_terms(text)}\n\n")
 
         md_lines.append("### Transcrição Estruturada\n")
-        md_lines.append("> **Nota do Sistema:** Transcrição limpa via Escriba.\n\n")
 
         for (ts, idx, seg_wins), label in zip(segments, topic_labels):
             md_lines.append(f"#### [{ts}] - Tópico: {label}\n")
@@ -796,6 +857,42 @@ def srt_to_md(
     except Exception as e:
         print_warn(f"Falha ao processar segmentação MD: {e}", indentation_prefix)
         return None
+
+
+def cleanup_temp_files(cwd_path: Path, channel_dir_name: str) -> int:
+    """
+    Remove arquivos temporários deixados pelo yt-dlp em caso de interrupção.
+    
+    Arquivos temporários:
+    - *.part (download incompleto)
+    - *.ytdl (cache do yt-dlp)
+    - *.temp / *.tmp (escrita intermediária)
+    - *.info.json (metadados não colhidos)
+    
+    Returns:
+        Número de arquivos removidos.
+    """
+    patterns = ["*.part", "*.ytdl", "*.temp", "*.tmp"]
+    cleaned = 0
+    
+    for pattern in patterns:
+        for temp_file in cwd_path.glob(pattern):
+            try:
+                temp_file.unlink()
+                cleaned += 1
+            except Exception:
+                pass
+    
+    for info_file in cwd_path.glob(f"{channel_dir_name}-*.info.json"):
+        try:
+            info_file.unlink()
+            cleaned += 1
+        except Exception:
+            pass
+    
+    if cleaned > 0:
+        print_info(f"{DIM}Cleanup: {cleaned} arquivo(s) temporário(s) removido(s){RESET}")
+    return cleaned
 
 
 def cleanup_subtitles(
@@ -867,81 +964,7 @@ def cleanup_subtitles(
 
 # ─── Download Individual ──────────────────────────────────────────────────────
 
-def download_video(
-    yt_dlp_cmd_list: list[str],
-    cookie_args_list: list[str],
-    video_id: str,
-    language_opt_string: str,
-    channel_dir_name: str,
-    audio_only_flag: bool,
-    output_dir_path: Path | None = None,
-    mp3_flag: bool = False,
-) -> int:
-    """
-    Baixa legendas ou áudio de um vídeo específico usando yt-dlp.
-    
-    O yt-dlp é chamado como subprocesso. Essa função monta todos os argumentos:
-    - --write-info-json: salva metadados (útil depois)
-    - --write-auto-sub: baixa legendas automáticas se não houver manuais
-    - --convert-subs srt: converte para formato SRT
-    - --sub-langs: qual idioma pedir
-    
-    Para áudio (audio_only_flag=True/mp3_flag=True):
-    - Baixa apenas o melhor áudio (formato 'ba[ext=webm]')
-    - Renomeia o arquivo para o TITULO do vídeo (solicitação do usuário)
-    - Converte para MP3 se mp3_flag for True
-    
-    Returns:
-        Exit code do processo (0 = sucesso, outro = erro)
-    """
-    # Naming convention: Título para áudio, [Channel]-[ID] para legendas
-    if audio_only_flag:
-        output_template_string = "%(title)s.%(ext)s"
-    else:
-        output_template_string = f"{channel_dir_name}-{video_id}"
-        
-    if output_dir_path:
-        output_template_string = str(output_dir_path / output_template_string)
 
-    # Base arguments
-    download_cmd_list = (
-        yt_dlp_cmd_list
-        + ["--js-runtimes", f"node:{NODE_PATH}"]
-        + ["--ignore-no-formats-error"]
-        + ["--write-info-json"]
-        + ["--restrict-filenames"]  # Evita problemas com caracteres especiais no título
-    )
-
-    # Audio vs Subtitles logic
-    if mp3_flag:
-        download_cmd_list += [
-            "--extract-audio",
-            "--audio-format", "mp3",
-            "--audio-quality", "0",  # Melhor qualidade
-        ]
-    elif audio_only_flag:
-        download_cmd_list += ["-f", "ba[ext=webm]"]
-    else:
-        # Modo legendas
-        download_cmd_list += ["--skip-download", "--write-auto-sub", "--convert-subs", "srt"]
-        download_cmd_list += ["--sub-langs", language_opt_string]
-
-    # Cookies, Output and URL
-    download_cmd_list += cookie_args_list
-    download_cmd_list += ["-o", output_template_string]
-    download_cmd_list += [f"https://www.youtube.com/watch?v={video_id}"]
-
-    subprocess_instance = subprocess.Popen(download_cmd_list)
-    try:
-        subprocess_instance.wait()
-    except KeyboardInterrupt:
-        subprocess_instance.terminate()
-        try:
-            subprocess_instance.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            subprocess_instance.kill()
-        raise  # repropaga para o handler principal
-    return subprocess_instance.returncode
 
 
 def harvest_and_delete_info_json(
@@ -1044,6 +1067,14 @@ def parse_args() -> argparse.Namespace:
                         help="Modo rápido: pula o tempo de espera entre downloads")
     cli_parser.add_argument("--regen-md", action="store_true",
                         help="Modo offline: regenera .md a partir de todos os .srt na pasta atual (não faz downloads)")
+    cli_parser.add_argument("--force", action="store_true",
+                        help="Combinado com --regen-md: sobrescreve .md existentes e força re-segmentação pelo algoritmo atual")
+    cli_parser.add_argument("--upgrade-md", action="store_true",
+                        help="Converte in-place o cabeçalho dos .md existentes para o novo formato (YAML + H1) sem reprocessar o TF-IDF")
+    cli_parser.add_argument("--consolidate", action="store_true",
+                        help="Gera ou atualiza os volumes unificados do NotebookLM para o canal atual")
+    cli_parser.add_argument("--lexis-reset", action="store_true",
+                        help="Apaga os volumes do NotebookLM do canal e reprocessa todos os arquivos do zero")
     cli_parser.add_argument("--migrate", action="store_true",
                         help="Adapta bancos de dados JSON antigos para a nova versão (youtube_channel)")
     cli_parser.add_argument("-v", "--version", action="version", version=f"Versão: {VERSION}")
@@ -1556,7 +1587,7 @@ def process_videos(
                     else:
                         print_info(f"vídeo recente ({days_ago_count}d) — não marcado como sem legenda", sub_indent_space)
 
-                    if not cli_args.fast:
+                    if not cli_args.fast and loop_iteration_idx < total_videos_count:
                         print_countdown(1, "Aguardando", sub_indent_space)
                 else:
                     downloaded_videos_count += 1
@@ -1567,7 +1598,7 @@ def process_videos(
                         _dirty += 1
                         _flush()
                         
-                    if not cli_args.fast:
+                    if not cli_args.fast and loop_iteration_idx < total_videos_count:
                         sleep_duration_seconds = random.randint(1, 5)
                         print_countdown(sleep_duration_seconds, "Aguardando", sub_indent_space)
                     else:
@@ -1586,6 +1617,7 @@ def process_videos(
         print()
         print_warn(f"Processamento interrompido. {DIM}Gerando resumo parcial...{RESET}")
         was_interrupted = True
+        cleanup_temp_files(session_config.cwd_path, session_config.channel_dir_name)
         _flush(force=True)  # garante que nenhuma mutação pendente seja perdida
 
     # ---------- Processamento Deferido de MD --------------
@@ -1645,8 +1677,12 @@ def print_summary(downloaded_videos_count: int, skipped_videos_count: int, error
     print()
 
 
-def regen_md_from_srt_files() -> None:
-    """Modo offline: varre archive/ e depois a pasta atual buscando .srt e regenera .md via TF-IDF."""
+def regen_md_from_srt_files(force: bool = False) -> None:
+    """Modo offline: varre archive/ e depois a pasta atual buscando .srt e regenera .md via TF-IDF.
+
+    Args:
+        force: Se True, sobrescreve .md existentes (permite re-segmentar arquivos já gerados).
+    """
     cwd_path = Path.cwd()
     archive_path = cwd_path / "archive"
 
@@ -1709,10 +1745,12 @@ def regen_md_from_srt_files() -> None:
 
         # Verificar se .md já existe
         md_path = srt_path.with_suffix(".md")
-        if md_path.exists():
+        if md_path.exists() and not force:
             print_skip(f"{srt_path.name}  {DIM}.md já existe — pulando{RESET}", indentation_prefix)
             skipped_count += 1
             continue
+        elif md_path.exists() and force:
+            print_dl(f"{srt_path.name}{RESET}  {DIM}re-segmentando (--force){RESET}", indentation_prefix)
 
         print_dl(f"{srt_path.name}{RESET}  {DIM}gerando .md{RESET}", indentation_prefix)
         result_path = srt_to_md(srt_path, video_id, video_title, threshold=0.3, indentation_prefix="      ")
@@ -1729,6 +1767,167 @@ def regen_md_from_srt_files() -> None:
     print(f"  {ICON_OK}  Convertidos : {BGREEN}{converted_count}{RESET}")
     print(f"  {ICON_SKIP}  Pulados     : {DIM}{skipped_count}{RESET}")
     print(f"  {ICON_INFO}  Total       : {total_count}")
+    print()
+
+
+# ─── Upgrade de Cabeçalho MD ─────────────────────────────────────────────────
+
+def upgrade_md_headers() -> None:
+    """
+    Converte in-place o cabeçalho dos .md gerados por versões anteriores do Escriba
+    para o novo formato com YAML frontmatter + H1 + blockquote de metadados.
+
+    O corpo do arquivo (### Segmentos de Tópicos, ### Transcrição Estruturada)
+    NÃO é alterado — apenas as primeiras linhas do cabeçalho são reescritas.
+    Isso é equivalente a reprocessar sem recalcular o TF-IDF.
+
+    Formato antigo detectado:
+        ## Título do Vídeo
+        **URL:** https://youtube.com/watch?v=...
+        **Data:** YYYY-MM-DD
+        **Duração:** HH:MM:SS
+
+    Formato novo gerado:
+        ---
+        title: "Título do Vídeo"
+        video_id: "xXxXxXxXxXx"
+        url: "https://..."
+        date: "YYYY-MM-DD"
+        duration: "HH:MM:SS"
+        language: "pt"
+        source: "Escriba vX.Y.Z"
+        ---
+
+        # Título do Vídeo
+
+        > **Data:** YYYY-MM-DD · **Duração:** HH:MM:SS · **Idioma:** pt
+        > 🔗 [https://...](https://...)
+    """
+    cwd_path = Path.cwd()
+    archive_path = cwd_path / "archive"
+
+    # Padrão de cabeçalho antigo: ## Título seguido de pelo menos uma linha **CAMPO:**
+    _OLD_HEADER_RE = re.compile(
+        r'^##\s+(?P<title>.+?)\n'
+        r'(?:\*\*URL:\*\*\s*(?P<url>\S+?)\s*\n)?'
+        r'(?:\*\*Data:\*\*\s*(?P<date>\S+?)\s*\n)?'
+        r'(?:\*\*Duração:\*\*\s*(?P<duration>\S+?)\s*\n)?',
+        re.MULTILINE,
+    )
+
+    # Padrão de arquivo já atualizado (YAML frontmatter)
+    _NEW_HEADER_MARKER = re.compile(r'^---\n', re.MULTILINE)
+
+    # Varre cwd e archive/
+    scan_dirs: list[tuple[Path, str]] = [(cwd_path, "./")]
+    if archive_path.is_dir():
+        scan_dirs.append((archive_path, "archive/"))
+
+    all_md_files: list[tuple[Path, str]] = []
+    for scan_dir, label in scan_dirs:
+        for md in sorted(scan_dir.glob("*.md")):
+            all_md_files.append((md, label))
+
+    if not all_md_files:
+        print_err("Nenhum arquivo .md encontrado na pasta atual ou em archive/.")
+        sys.exit(1)
+
+    print_info(f"Modo: Upgrade de Cabeçalho MD")
+    print_info(f"{BOLD}{len(all_md_files)} arquivo(s) .md encontrado(s){RESET}")
+    print()
+
+    upgraded_count = 0
+    skipped_count  = 0
+    already_new    = 0
+    error_count    = 0
+    current_label  = ""
+
+    for idx, (md_path, origin_label) in enumerate(all_md_files, start=1):
+        idx_prefix = f"{BLUE}[{idx:>{len(str(len(all_md_files)))}}/{len(all_md_files)}]{RESET}"
+
+        if origin_label != current_label:
+            current_label = origin_label
+            section_files = sum(1 for _, l in all_md_files if l == origin_label)
+            print_section(f"{origin_label}  {DIM}({section_files} arquivo(s)){RESET}")
+
+        try:
+            content = md_path.read_text(encoding="utf-8")
+        except Exception as e:
+            print_warn(f"{md_path.name}  erro ao ler: {e}", idx_prefix)
+            error_count += 1
+            continue
+
+        # Já está no novo formato?
+        if _NEW_HEADER_MARKER.match(content):
+            print_skip(f"{md_path.name}  {DIM}já atualizado{RESET}", idx_prefix)
+            already_new += 1
+            continue
+
+        # Detectar cabeçalho antigo
+        m = _OLD_HEADER_RE.match(content)
+        if not m:
+            print_skip(f"{md_path.name}  {DIM}formato não reconhecido — pulando{RESET}", idx_prefix)
+            skipped_count += 1
+            continue
+
+        title    = (m.group("title")    or md_path.stem).strip()
+        url      = (m.group("url")      or "").strip().rstrip("/")
+        date_str = (m.group("date")     or "Desconhecida").strip()
+        duration = (m.group("duration") or "?").strip()
+
+        # Extrai video_id da URL ou do nome do arquivo
+        vid_id_match = re.search(r"[?&]v=([A-Za-z0-9_-]{11})", url)
+        if not vid_id_match:
+            vid_id_match = re.search(r"([A-Za-z0-9_-]{11})", md_path.stem)
+        video_id = vid_id_match.group(1) if vid_id_match else "desconhecido"
+
+        # Extrai código de idioma do nome do arquivo (ex: canal-ID-pt.md → "pt")
+        lang_match = re.search(r"-([a-z]{2}(?:-[A-Z]{2})?)\.md$", md_path.name)
+        lang_code  = lang_match.group(1) if lang_match else "pt"
+
+        if not url:
+            url = f"https://youtube.com/watch?v={video_id}"
+
+        # Montar novo cabeçalho YAML + H1
+        new_header = (
+            f"---\n"
+            f'title: "{title}"\n'
+            f'video_id: "{video_id}"\n'
+            f'url: "{url}"\n'
+            f'date: "{date_str}"\n'
+            f'duration: "{duration}"\n'
+            f'language: "{lang_code}"\n'
+            f'source: "Escriba v{VERSION} (upgrade)"\n'
+            f"---\n"
+            f"\n"
+            f"# {title}\n"
+            f"\n"
+            f"> **Data:** {date_str} · **Duração:** {duration} · **Idioma:** {lang_code}  \n"
+            f"> 🔗 [{url}]({url})\n"
+            f"\n"
+        )
+
+        # Corpo = tudo após o cabeçalho antigo
+        body = content[m.end():].lstrip("\n")
+        new_content = new_header + body
+
+        try:
+            md_path.write_text(new_content, encoding="utf-8")
+            print_ok(f"{md_path.name}  {DIM}cabeçalho atualizado{RESET}", idx_prefix)
+            upgraded_count += 1
+        except Exception as e:
+            print_warn(f"{md_path.name}  erro ao salvar: {e}", idx_prefix)
+            error_count += 1
+
+    # ── Resumo ────────────────────────────────────────────────────────────────
+    print()
+    print(f"  {BOLD}{BWHITE}Upgrade de Cabeçalho MD concluído{RESET}")
+    print(f"  {ICON_OK}  Atualizados  : {BGREEN}{upgraded_count}{RESET}")
+    print(f"  {ICON_SKIP}  Já atualizados: {DIM}{already_new}{RESET}")
+    print(f"  {ICON_SKIP}  Pulados       : {DIM}{skipped_count}{RESET}")
+    if error_count:
+        print(f"  {ICON_ERR}  Erros         : {BRED}{error_count}{RESET}")
+    print(f"  {ICON_INFO}  Total         : {len(all_md_files)}")
     print()
 
 
@@ -1901,7 +2100,12 @@ def main() -> None:
 
     # Short-circuit: modo offline de regeneração MD
     if cli_args.regen_md:
-        regen_md_from_srt_files()
+        regen_md_from_srt_files(force=getattr(cli_args, 'force', False))
+        return
+
+    # Short-circuit: upgrade de cabeçalho MD in-place
+    if cli_args.upgrade_md:
+        upgrade_md_headers()
         return
 
     # Short-circuit: migração de bancos de dados
@@ -1933,15 +2137,79 @@ def main() -> None:
         sys.exit(0)
 
     # --- Fluxo Normal do Script ---
-    
-    # Detectar modo multi-canal: sem argumento explícito + JSON com canais registrados
-    user_provided_canal = cli_args.canal  # Antes de setup_session modificar
-    
+
+    # Guardamos o que o usuário digitou na linha de comando (ex: "@MeuCanal").
+    # Fazemos isso ANTES de qualquer função poder modificar cli_args.canal,
+    # garantindo que vamos comparar com o valor original do usuário.
+    user_provided_canal = cli_args.canal
+
+    # Descobrimos o caminho do JSON desta pasta de trabalho.
+    # Cada pasta de canal tem seu próprio banco de dados chamado escriba_<NomeDaPasta>.json.
+    # Ele guarda o histórico de vídeos já processados e os canais cadastrados.
+    cwd_path = Path.cwd()
+    latest_json_path = get_latest_json_path(cwd_path)
+    json_exists = latest_json_path.exists()  # True se o banco já foi criado antes
+
+    # ── [NOVO CANAL] ──────────────────────────────────────────────────────────
+    # Este bloco trata a situação em que o usuário digita um canal que o Escriba
+    # ainda não conhece nesta pasta.
+    #
+    # Exemplo de uso:
+    #   A pasta já tem @CanalA cadastrado. O usuário agora roda:
+    #     python escriba.py @CanalB
+    #   Nesse caso, @CanalB é novo → queremos registrá-lo E baixar apenas dele.
+    #
+    # Condição: só entramos aqui se:
+    #   1. O usuário passou um canal explicitamente (@Canal ou URL)
+    #   2. Já existe um JSON nesta pasta (ou seja, não é a primeira execução)
+    if user_provided_canal and json_exists:
+        # register_channel_in_json verifica se o canal já existe e, se não existir,
+        # adiciona à lista youtube_channels e salva o JSON.
+        # Retorna (is_new=True, ...) quando o canal foi adicionado agora.
+        is_new_channel, _registered_ok = register_channel_in_json(
+            latest_json_path, user_provided_canal
+        )
+
+        if is_new_channel:
+            # O canal acabou de ser registrado pela primeira vez nesta pasta.
+            # Não queremos reprocessar todos os outros canais que já estão no banco.
+            # Por isso passamos channel_filter= para o process_videos(), que faz
+            # a filtragem e só baixa legendas deste canal específico.
+            #
+            # A verificação de arquivos já baixados também acontece dentro de
+            # process_videos() automaticamente — não vamos re-baixar nada.
+            print_section("Novo Canal Detectado")
+            print_info(
+                f"Canal {BOLD}{user_provided_canal}{RESET} é novo nesta pasta. "
+                f"Processando apenas este canal."
+            )
+            session_config = setup_session(cli_args)
+            cookie_args_list, language_opt_string = init_auth_and_language(
+                session_config, cli_args.lang, cli_args.refresh_cookies
+            )
+            dl, sk, er, tot, chan_tot, was_interrupted = process_videos(
+                session_config, cookie_args_list, language_opt_string, cli_args,
+                channel_filter=user_provided_canal,  # Foca apenas no novo canal
+                is_first_channel=False,              # False: impede que o novo canal adote ("roube") vídeos órfãos
+            )
+            print_section("Resumo")
+            print_summary(dl, sk, er, tot, chan_tot)
+            if cli_args.consolidate or cli_args.lexis_reset:
+                consolidate_by_channel(str(cwd_path), reset_mode=cli_args.lexis_reset)
+            if was_interrupted:
+                sys.exit(130)  # Código 130 = interrupção por Ctrl+C (padrão Unix)
+            return  # Encerra o main() — não precisa continuar para os outros modos
+
+        # Se chegamos aqui, o canal informado JA está no banco.
+        # Continuamos para o fluxo normal abaixo, que reprocessa o canal normalmente.
+
+    # ── [MODO AUTO / MULTI-CANAL] ────────────────────────────────────────────
+    # Quando o usuário não passa nenhum canal na linha de comando,
+    # o Escriba lê os canais registrados no JSON e sincroniza todos automaticamente.
+    # Isso é útil para rodar o script em um agendador (cron) sem precisar digitar nada.
     all_channels_to_sync = []
     if not user_provided_canal:
-        cwd_path = Path.cwd()
-        latest_json_path = get_latest_json_path(cwd_path)
-        if latest_json_path.exists():
+        if json_exists:
             try:
                 with open(latest_json_path, "r", encoding="utf-8") as f:
                     json_data = json.load(f)
@@ -1950,7 +2218,7 @@ def main() -> None:
                     if isinstance(channels_list, list) and len(channels_list) >= 1:
                         all_channels_to_sync = list(channels_list)
             except Exception:
-                pass
+                pass  # Se o JSON estiver mal formado, deixamos a lista vazia e seguimos
 
     if all_channels_to_sync:
         # === MODO CANAL REGISTRADO ===
@@ -2011,6 +2279,8 @@ def main() -> None:
         else:
             print_section("Resumo")
         print_summary(total_dl, total_skip, total_err, total_vids, total_chan_vids)
+        if cli_args.consolidate or cli_args.lexis_reset:
+            consolidate_by_channel(str(cwd_path), reset_mode=cli_args.lexis_reset)
         if was_interrupted:
             sys.exit(130)
     else:
@@ -2023,6 +2293,8 @@ def main() -> None:
             session_config, cookie_args_list, language_opt_string, cli_args
         )
         print_summary(downloaded_videos_count, skipped_videos_count, error_videos_count, total_videos_count, chan_tot)
+        if cli_args.consolidate or cli_args.lexis_reset:
+            consolidate_by_channel(str(cwd_path), reset_mode=cli_args.lexis_reset)
         if was_interrupted:
             sys.exit(130)
 
@@ -2034,4 +2306,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print()
         print_warn(f"Interrompido pelo usuário (Ctrl+C).  {DIM}Saindo...{RESET}")
+        cwd = Path.cwd()
+        if cwd.name != "escriba":
+            cleanup_temp_files(cwd, cwd.name)
         sys.exit(130)  # Código 130 = SIGINT (padrão Unix)

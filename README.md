@@ -67,6 +67,7 @@ O núcleo foi refatorado para seguir padrões rigorosos de qualidade Python (PEP
 *   `history.py`: Gestão de estado atômico e persistência JSON.
 *   `rules.py`: Motor de limpeza léxica e processamento de regras.
 *   `utils.py`: Sistema de design CLI e utilitários auxiliares.
+*   `lexis.py`: Motor nativo de consolidação em volumes massivos para o NotebookLM.
 
 ---
 
@@ -144,6 +145,9 @@ escriba -d 20260101 @CanalExemplo
 
 # Manutenção: Regenerar todos os arquivos .md a partir do cache local
 escriba --regen-md
+
+# Consolidação NotebookLM: Gera volumes baseados nos arquivos do canal
+escriba @CanalExemplo --consolidate
 ```
 
 ### Flags de Poder
@@ -154,6 +158,8 @@ escriba --regen-md
 | `-rc, --refresh-cookies` | Purga o cache de cookies e extrai novos do Chrome. |
 | `-f, --fast` | **Modo Turbo**: Remove o delay entre requisições. |
 | `--no-md` | Pula o motor de IA e preserva apenas o arquivo bruto. |
+| `--consolidate` | Consolida os arquivos textuais do canal em volumes otimizados para RAG/NotebookLM. |
+| `--lexis-reset` | Descarta os volumes do NotebookLM existentes e refaz os blocos do zero. |
 
 ---
 
