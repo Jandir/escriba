@@ -75,7 +75,7 @@ import requests
 
 from collections import Counter
 
-VERSION = "2.5.0"
+VERSION = "2.6.0"
 
 _script_dir = Path(__file__).parent.resolve()
 

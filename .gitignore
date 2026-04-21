@@ -1,8 +1,24 @@
+# Dados sensíveis e locais
 cookies.txt
+.env
+*.json
+!package.json
+
+# Scripts de manutenção local
 renomear-legendas.sh
 baixar-canal.sh
-__pycache__/
-.env
-escriba_actionchurchoficial.json
-estimar-espaco.py
 baixar-canal.py
+estimar-espaco.py
+replace_prints.py
+rebuild_channel_db.py
+skill.md
+
+# Arquivos do sistema / IDE
+.DS_Store
+.agent/
+*.code-workspace
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
