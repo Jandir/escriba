@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Versão-2.4.7-blue?style=for-the-badge" alt="Versão">
+  <img src="https://img.shields.io/badge/Versão-2.6.0-blue?style=for-the-badge" alt="Versão">
   <img src="https://img.shields.io/badge/Python-3.13+-ffd343?style=for-the-badge&logo=python&logoColor=black" alt="Python">
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/Licença-MIT-green?style=for-the-badge" alt="Licença">
@@ -151,15 +151,24 @@ escriba @CanalExemplo --consolidate
 ```
 
 ### Flags de Poder
+
 | Opção | Propósito |
 |---|---|
-| `-l, --lang` | Força o idioma (ex: `pt`, `en`). |
-| `-a, --mp3` | Baixa o áudio convertido em MP3. |
+| `-l, --lang` | Força o idioma das legendas (ex: `pt`, `en`). |
+| `-a, --mp3` | Baixa apenas o áudio convertido em MP3. |
+| `-d, --date` | Data limite (YYYYMMDD). Baixa apenas vídeos posteriores a esta data. |
 | `-rc, --refresh-cookies` | Purga o cache de cookies e extrai novos do Chrome. |
-| `-f, --fast` | **Modo Turbo**: Remove o delay entre requisições. |
-| `--no-md` | Pula o motor de IA e preserva apenas o arquivo bruto. |
-| `--consolidate` | Consolida os arquivos textuais do canal em volumes otimizados para RAG/NotebookLM. |
-| `--lexis-reset` | Descarta os volumes do NotebookLM existentes e refaz os blocos do zero. |
+| `-f, --fast` | **Modo Turbo**: Remove o delay entre requisições de metadados. |
+| `--no-md` | Pula a segmentação semântica e preserva apenas o arquivo bruto. |
+| `--keep-srt` | Mantém o arquivo `.srt` no disco após converter para `.md`. |
+| `--regen-md` | **Modo Offline**: Gera/Regenera todos os `.md` a partir dos `.srt` locais. |
+| `--force` | (Usado com `--regen-md`) Sobrescreve arquivos existentes e força re-processamento. |
+| `--upgrade-md` | Converte cabeçalhos de `.md` antigos para o formato YAML + H1. |
+| `--consolidate` | Gera volumes unificados (Lexis) otimizados para o NotebookLM. |
+| `--lexis-reset` | Apaga os volumes consolidados existentes e reconstrói do zero. |
+| `--migrate` | Migra bancos de dados JSON legados para a estrutura multi-canal atual. |
+| `--ignore-metadata` | Pula a recuperação de metadados faltantes no histórico. |
+| `-v, --version` | Exibe a versão atual do sistema. |
 
 ---
 
