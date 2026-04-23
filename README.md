@@ -148,7 +148,7 @@ escriba -d 20260101 @CanalExemplo
 escriba --regen-md
 
 # Consolidação NotebookLM: Gera volumes baseados nos arquivos do canal
-escriba @CanalExemplo --consolidate
+escriba @CanalExemplo --consolidar
 ```
 
 ### Flags de Poder
@@ -165,7 +165,7 @@ escriba @CanalExemplo --consolidate
 | `--regen-md` | **Modo Offline**: Gera/Regenera todos os `.md` a partir dos `.srt` locais. |
 | `--force` | (Usado com `--regen-md`) Sobrescreve arquivos existentes e força re-processamento. |
 | `--upgrade-md` | Converte cabeçalhos de `.md` antigos para o formato YAML + H1. |
-| `--consolidate` | Gera volumes unificados (Lexis) otimizados para o NotebookLM. |
+| `--consolidar` | Gera volumes unificados (Lexis) otimizados para o NotebookLM. |
 | `--lexis-reset` | Apaga os volumes consolidados existentes e reconstrói do zero. |
 | `--migrate` | Migra bancos de dados JSON legados para a estrutura multi-canal atual. |
 | `--ignore-metadata` | Pula a recuperação de metadados faltantes no histórico. |

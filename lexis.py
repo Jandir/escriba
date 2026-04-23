@@ -189,8 +189,8 @@ def _extract_metadata_from_content(content_str: str) -> Dict[str, str]:
         # O regex abaixo é MUITO permissivo com espaços, asteriscos e dois-pontos.
         # Captura: 2026-03-16 ou 20260316
         date_patterns = [
-            r"[\*\s]*Dat(?:a|e)[\*\s]*:?\s*(\d{4}[-]?\d{2}[-]?\d{2})",
-            r">\s*[\*\s]*Dat(?:a|e)[\*\s]*:?\s*(\d{4}[-]?\d{2}[-]?\d{2})"
+            r"Dat(?:a|e)[^0-9]*?(\d{4}[-]?\d{2}[-]?\d{2})",
+            r">\s*Dat(?:a|e)[^0-9]*?(\d{4}[-]?\d{2}[-]?\d{2})"
         ]
         for pattern in date_patterns:
             date_match = re.search(pattern, content_str, re.IGNORECASE)
@@ -428,11 +428,11 @@ def _perform_legacy_migration(legacy_path_str: str, state_file_path_str: str) ->
         dest_data_dict["lexis_state"] = legacy_state_dict
         with open(state_file_path_str, 'w', encoding='utf-8') as file_descriptor_obj:
             json.dump(dest_data_dict, file_descriptor_obj, ensure_ascii=False, indent=2)
-        print_info(f"🔀 Estado legado migrado → {os.path.basename(state_file_path_str)}", "  ")
+        print_info(f"Estado legado migrado → {os.path.basename(state_file_path_str)}", "  ")
 
     # Após migrar com sucesso, deletamos o arquivo antigo para não repetir o processo
     os.remove(legacy_path_str)
-    print_info("🗑  .lexis-join-state.json legado removido.", "  ")
+    print_info(".lexis-join-state.json legado removido.", "  ")
 
 
 def load_state(state_file_path_str: str) -> Dict[str, Any]:
@@ -490,7 +490,7 @@ def save_state(state_file_path_str: str, state_dict: Dict[str, Any]) -> None:
     
     with open(state_file_path_str, 'w', encoding='utf-8') as file_descriptor_obj:
         json.dump(data_dict_dict, file_descriptor_obj, ensure_ascii=False, indent=2)
-    print_info(f"💾 Estado Lexis salvo em {os.path.basename(state_file_path_str)}", "  ")
+    print_info(f"Estado Lexis salvo em {os.path.basename(state_file_path_str)}", "  ")
 
 def get_channel_url(channel_name_str: str) -> str:
     """
@@ -704,7 +704,7 @@ def process_channel(channel_dir_path_str: str, channel_name_str: str, reset_mode
     )
     
     if not files_to_proc_list and not reset_mode_bool:
-        print_ok(f"\n✅ Canal: {channel_name_str} — nenhum arquivo novo.")
+        print_ok(f"Canal: {channel_name_str} — nenhum arquivo novo.")
         return
 
     # Inicia a "fábrica" de volumes (consolidação)
@@ -739,13 +739,14 @@ def _get_eligible_files(channel_path_str: str, channel_name_str: str) -> List[st
         if pattern_obj.match(f) and not vol_pattern_obj.match(f):
             eligible_files_list.append(f)
             
-    # 2. Busca na pasta 'archive'
-    archive_path: str = os.path.join(channel_path_str, ARCHIVE_DIR_NAME)
-    if os.path.exists(archive_path) and os.path.isdir(archive_path):
-        for f in os.listdir(archive_path):
-            if pattern_obj.match(f):
-                # Mantemos o prefixo 'archive/' para que o processador saiba onde ler
-                eligible_files_list.append(os.path.join(ARCHIVE_DIR_NAME, f))
+    # 2. Busca nas pastas 'archive' e 'archives'
+    for arch_dir in ["archive", "archives"]:
+        archive_path: str = os.path.join(channel_path_str, arch_dir)
+        if os.path.exists(archive_path) and os.path.isdir(archive_path):
+            for f in os.listdir(archive_path):
+                if pattern_obj.match(f):
+                    # Mantemos o prefixo para que o processador saiba onde ler
+                    eligible_files_list.append(os.path.join(arch_dir, f))
                 
     eligible_files_list.sort()
     return eligible_files_list
@@ -760,7 +761,7 @@ def _reset_channel(channel_path_str: str, channel_name_str: str, paths_dict: Dic
     Isso é útil quando mudamos as regras de limpeza de texto e queremos 
     gerar volumes novos e melhores a partir dos arquivos originais.
     """
-    print_info(f"Resetando Canal: {channel_name_str}")
+    print_info(f"Limpando canal para reprocessamento: {channel_name_str}")
     
     # 1. Apaga os arquivos de volume (.txt) na pasta de saída
     if os.path.exists(paths_dict["output"]):
@@ -772,9 +773,11 @@ def _reset_channel(channel_path_str: str, channel_name_str: str, paths_dict: Dic
     # 2. Limpa a memória de processamento no arquivo JSON
     _clear_lexis_state(paths_dict["state"])
     
-    # 3. Traz os arquivos originais de volta da pasta 'archive' para a pasta principal
-    if os.path.exists(paths_dict["archive"]):
-        _restore_from_archive(paths_dict["archive"], channel_path_str)
+    # 3. Traz os arquivos originais de volta das pastas 'archive' ou 'archives'
+    for arch_dir in ["archive", "archives"]:
+        arch_path: str = os.path.join(channel_path_str, arch_dir)
+        if os.path.exists(arch_path) and os.path.isdir(arch_path):
+            _restore_from_archive(arch_path, channel_path_str)
 
 
 def _clear_lexis_state(state_path_str: str) -> None:
@@ -799,7 +802,7 @@ def _restore_from_archive(archive_path_str: str, dest_path_str: str) -> None:
         shutil.move(os.path.join(archive_path_str, f_str), os.path.join(dest_path_str, f_str))
         count_int += 1
     if count_int > 0:
-        print_ok(f"  📦 Restaurados {count_int} arquivos do archive.")
+        print_ok(f"Restaurados {count_int} arquivos do archive.")
 
 
 def _load_and_sync_state(paths_dict: Dict[str, str], channel_name_str: str, reset_mode_bool: bool) -> Dict[str, Any]:
@@ -896,10 +899,10 @@ def _get_ext_priority(filename_str: str) -> int:
 def _archive_files(source_dir_path_str: str, archive_dir_path_str: str, files_list_list: List[str]) -> None:
     """Move arquivos para a pasta 'archive' para manter a pasta principal limpa."""
     for f_str in files_list_list:
-        # Se o arquivo já está na pasta archive (prefixo detectado), não precisamos mover
-        if f_str.startswith(ARCHIVE_DIR_NAME + os.sep) or f_str.startswith(ARCHIVE_DIR_NAME + "/"):
+        # Se o arquivo já está em uma pasta de archive (prefixo detectado), não precisamos mover
+        if f_str.startswith("archive" + os.sep) or f_str.startswith("archive/") or \
+           f_str.startswith("archives" + os.sep) or f_str.startswith("archives/"):
             continue
-            
         src_p_str: str = os.path.join(source_dir_path_str, f_str)
         dst_p_str: str = os.path.join(archive_dir_path_str, f_str)
         
@@ -940,6 +943,12 @@ def _orchestrate_consolidation(channel_name_str: str, files_list_list: List[str]
     
     # Carrega a base global para enriquecer títulos/datas se necessário
     global_meta_dict_dict: Dict[str, Any] = _load_global_metadata(paths_dict["state"])
+
+    # Tenta enriquecer metadados dos vídeos que já estavam no volume
+    for m in vol_meta_list_list:
+        vid_id = m.get("id")
+        if vid_id and vid_id in global_meta_dict_dict:
+            _enrich_metadata(m, global_meta_dict_dict[vid_id])
 
     for index_int, f_str in enumerate(files_list_list):
         fpath_str: str = os.path.join(os.path.dirname(paths_dict["state"]), f_str)
@@ -1011,7 +1020,7 @@ def _initialize_volume_content(paths_dict: Dict[str, str], channel_name_str: str
     if len(content_str) >= MAX_CHARS:
         return "" 
         
-    print_info(f"\n📂 Retomando Volume {vol_idx_int} ({len(content_str):,} chars)")
+    print_info(f"Retomando Volume {vol_idx_int} ({len(content_str):,} chars)")
     
     # O índice antigo fica no final do arquivo. Precisamos removê-lo para adicionar 
     # mais conteúdo e depois gerar um índice novo e completo.
@@ -1046,7 +1055,7 @@ def _process_single_file(full_path_str: str, filename_str: str, global_meta_dict
         formatted_str, _, _ = process_content(raw_content_str, filename_str, full_path_str, metadata_dict=meta_dict_dict)
         return formatted_str, meta_dict_dict
     except Exception as error_obj:
-        print_err(f"  ❌ Erro ao processar {filename_str}: {error_obj}")
+        print_err(f"Erro ao processar {filename_str}: {error_obj}")
         return "", {}
 
 
@@ -1111,7 +1120,7 @@ def _save_volume(paths_dict: Dict[str, str], channel_name_str: str, idx_int: int
     
     with open(output_path_str, 'w', encoding='utf-8') as file_descriptor_obj:
         file_descriptor_obj.write(full_content_str)
-    print_ok(f"  📦 Volume {idx_int} finalizado ({len(full_content_str):,} caracteres)")
+    print_ok(f"Volume {idx_int} finalizado ({len(full_content_str):,} caracteres)")
 
 
 def _finalize_consolidation(paths_dict: Dict[str, str], name_str: str, idx_int: int, content_str: str, meta_list_list: List[Dict[str, str]], state_dict: Dict[str, Any]) -> None:
@@ -1139,8 +1148,8 @@ def _finalize_consolidation(paths_dict: Dict[str, str], name_str: str, idx_int: 
 
 def _print_lexis_banner(reset_mode_bool: bool, base_dir_path_str: str) -> None:
     """Imprime o cabeçalho visual de execução seguindo o padrão Escriba."""
-    mode_label_str: str = "RESET (reprocessando tudo)" if reset_mode_bool else "INCREMENTAL"
-    print_section(f"LEXIS — CONSOLIDAÇÃO — {mode_label_str}")
+    mode_label_str: str = "RESET" if reset_mode_bool else "INCREMENTAL"
+    print_section(f"CONSOLIDAÇÃO DE VOLUMES (LEXIS) — {mode_label_str}")
     print_info(f"Diretório Base: {os.path.abspath(base_dir_path_str)}")
 
 
@@ -1162,11 +1171,13 @@ def _scan_for_channel_files(dir_path_str: str) -> List[str]:
 
 
 def _has_archived_files(dir_path_str: str) -> bool:
-    """Verifica se existem arquivos na pasta de archive."""
-    archive_path_str: str = os.path.join(dir_path_str, ARCHIVE_DIR_NAME)
-    if not os.path.exists(archive_path_str):
-        return False
-    return any(f.endswith(('.txt', '.srt', '.md')) for f in os.listdir(archive_path_str))
+    """Verifica se existem arquivos na pasta de archive ou archives."""
+    for arch_dir in ["archive", "archives"]:
+        archive_path_str: str = os.path.join(dir_path_str, arch_dir)
+        if os.path.exists(archive_path_str) and os.path.isdir(archive_path_str):
+            if any(f.endswith(('.txt', '.srt', '.md')) for f in os.listdir(archive_path_str)):
+                return True
+    return False
 
 
 def _process_subdirectories(base_path_str: str, reset_mode_bool: bool) -> None:
@@ -1177,7 +1188,7 @@ def _process_subdirectories(base_path_str: str, reset_mode_bool: bool) -> None:
     Se você rodar o Lexis na sua pasta principal de 'scripts', ele vai 
     olhar cada subpasta e, se achar transcrições lá, vai processar uma a uma.
     """
-    ignore_set: Set[str] = {ARCHIVE_DIR_NAME, 'volumes_notebooklm', '__pycache__', '.venv', '.git'}
+    ignore_set: Set[str] = {'archive', 'archives', 'volumes_notebooklm', '__pycache__', '.venv', '.git'}
     subdirs_list: List[str] = [
         d for d in os.listdir(base_path_str) 
         if os.path.isdir(os.path.join(base_path_str, d)) and d not in ignore_set
@@ -1186,13 +1197,14 @@ def _process_subdirectories(base_path_str: str, reset_mode_bool: bool) -> None:
         process_channel(os.path.join(base_path_str, channel_name_str), channel_name_str, reset_mode_bool=reset_mode_bool)
 
 
-def consolidate_by_channel(base_dir_path_str: str, reset_mode_bool: bool = False) -> None:
+def consolidar_por_canal(base_dir_path_str: str, reset_mode_bool: bool = False) -> None:
     """
     Orquestra a consolidação de transcrições em volumes para um ou mais canais.
     
     POR QUE ISSO É NECESSÁRIO?
     Este é o ponto de entrada principal da lógica. Ele decide se vai 
     processar apenas a pasta atual ou se vai mergulhar nas subpastas.
+    O processo busca automaticamente arquivos na pasta do canal e no 'archive'.
     """
     if not os.path.exists(base_dir_path_str):
         print_err(f"O diretório '{base_dir_path_str}' não existe.")
@@ -1214,6 +1226,9 @@ def consolidate_by_channel(base_dir_path_str: str, reset_mode_bool: bool = False
     print_section("✅ Concluído!")
 
 
+# Ponto de entrada consolidado
+
+
 def main() -> None:
     """
     Entry point para execução standalone do lexis.py.
@@ -1228,7 +1243,7 @@ def main() -> None:
     parser_obj.add_argument("--reset", action="store_true", help="Reseta estado e volumes")
     args_obj = parser_obj.parse_args()
     
-    consolidate_by_channel(args_obj.path, reset_mode_bool=args_obj.reset)
+    consolidar_por_canal(args_obj.path, reset_mode_bool=args_obj.reset)
 
 
 if __name__ == "__main__":

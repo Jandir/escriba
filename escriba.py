@@ -71,7 +71,7 @@ from history import get_latest_json_path, load_all_local_history, save_channel_s
 from youtube import setup_environment, configure_cookies, filter_youtube_cookies, detect_language, generate_fast_list_json, download_video
 from datetime import datetime
 from dataclasses import dataclass
-from lexis import consolidate_by_channel
+from lexis import consolidar_por_canal
 
 from typing import Optional
 from dotenv import load_dotenv
@@ -187,7 +187,7 @@ def identify_source_type(url_str: str, cmd_list: list[str], cookie_args_list: li
     return "canal", "", None, None
 
 
-def consolidate_legacy_data(cwd_path: Path, target_json_path: Path) -> None:
+def consolidar_dados_legados(cwd_path: Path, target_json_path: Path) -> None:
     """Migra automaticamente JSONs antigos para o novo formato de pasta consolidada."""
     legacy_list = list(cwd_path.glob("escriba_*.json")) + list(cwd_path.glob("lista_*.json"))
     for lj_path in legacy_list:
@@ -304,7 +304,7 @@ def _load_initial_metadata(cwd_path: Path, url_str: str, cmd_list: list[str], co
     name_str, ident_str, chan_id_str, up_id_str = res_tuple
     
     json_path = cwd_path / f"escriba_{cwd_path.name}.json"
-    consolidate_legacy_data(cwd_path, json_path)
+    consolidar_dados_legados(cwd_path, json_path)
     return json_path, hist_dict, name_str, ident_str, chan_id_str, up_id_str
 
 
@@ -837,7 +837,7 @@ def _add_utility_args(parser_obj: argparse.ArgumentParser) -> None:
     parser_obj.add_argument("--regen-md", action="store_true", help="Modo offline: regenera .md a partir de todos os .srt na pasta atual")
     parser_obj.add_argument("--force", action="store_true", help="Combinado com --regen-md: sobrescreve .md existentes")
     parser_obj.add_argument("--upgrade-md", action="store_true", help="Converte cabeçalho dos .md existentes para o novo formato (YAML)")
-    parser_obj.add_argument("--consolidate", action="store_true", help="Gera ou atualiza os volumes unificados do NotebookLM")
+    parser_obj.add_argument("--consolidar", action="store_true", help="Gera ou atualiza os volumes unificados do NotebookLM (busca na pasta atual, 'archive' e 'archives')")
     parser_obj.add_argument("--lexis-reset", action="store_true", help="Apaga os volumes do NotebookLM do canal e reprocessa")
     parser_obj.add_argument("--migrate", action="store_true", help="Adapta bancos de dados JSON antigos para a nova versão")
     parser_obj.add_argument("-v", "--version", action="version", version=f"Versão: {VERSION}")
@@ -1173,13 +1173,13 @@ def process_videos(
             conf_obj, cookies_list, lang_str, cli_args_ns, json_path, full_list, working_list
         )
         
-        if not interrupted:
-            interrupted = _run_deferred_md_conversion(pending, cli_args_ns)
-            
-        return (*stats, chan_tot_int, interrupted)
+        # Mesmo se o download foi interrompido, tenta converter o que já baixou
+        interrupted_md = _run_deferred_md_conversion(pending, cli_args_ns)
+        
+        return (*stats, chan_tot_int, interrupted or interrupted_md)
     except KeyboardInterrupt:
         print()
-        print_warn(f"Interrompido pelo usuário. {DIM}Limpando e finalizando...{RESET}")
+        print_warn(f"Interrompido pelo usuário. {DIM}Pulando para as próximas etapas...{RESET}")
         cleanup_temp_files(conf_obj.cwd_path, conf_obj.channel_dir_name)
         return 0, 0, 0, 0, 0, True
 
@@ -1198,7 +1198,8 @@ def _run_video_download_loop(
     except KeyboardInterrupt:
         interrupted = True
         print()
-        print_warn(f"Interrompido pelo usuário. Finalizando canal atual... {DIM}(Ctrl+C novamente para sair forçado){RESET}")
+        msg = "Pulando para geração de arquivos .md..." if args.md else "Pulando para as próximas etapas..."
+        print_warn(f"Download interrompido. {DIM}{msg}{RESET}")
         cleanup_temp_files(conf.cwd_path, conf.channel_dir_name)
     
     _persist_state(json_path, full_list, lang, conf)
@@ -1360,14 +1361,17 @@ def _run_deferred_md_conversion(pending_list: list[tuple], cli_args_ns: argparse
                 srt_path.unlink()
     except KeyboardInterrupt:
         print()
-        print_warn("Fase 4 interrompida. Alguns arquivos MD podem não ter sido gerados.")
+        print_warn(f"Geração de MDs interrompida. {DIM}Pulando para a consolidação...{RESET}")
         return True
     return False
 
 
 def _scan_srt_files(cwd_path: Path) -> list[tuple[Path, str]]:
-    """Varre archive/ e cwd buscando arquivos .srt."""
-    scan_dirs_list = [(cwd_path / "archive", "archive/")] if (cwd_path / "archive").is_dir() else []
+    """Varre archive/, archives/ e cwd buscando arquivos .srt."""
+    scan_dirs_list = []
+    for arch_dir in ["archive", "archives"]:
+        if (cwd_path / arch_dir).is_dir():
+            scan_dirs_list.append((cwd_path / arch_dir, f"{arch_dir}/"))
     scan_dirs_list.append((cwd_path, "./"))
     
     srt_files_list = []
@@ -1476,10 +1480,11 @@ def _print_regen_summary(conv_int: int, skip_int: int, total_int: int) -> None:
 
 
 def _scan_md_files(cwd_path: Path) -> list[tuple[Path, str]]:
-    """Busca todos os arquivos .md no cwd e na pasta archive/."""
+    """Busca todos os arquivos .md no cwd e nas pastas archive/ e archives/."""
     scan_dirs_list = [(cwd_path, "./")]
-    if (cwd_path / "archive").is_dir():
-        scan_dirs_list.append((cwd_path / "archive", "archive/"))
+    for arch_dir in ["archive", "archives"]:
+        if (cwd_path / arch_dir).is_dir():
+            scan_dirs_list.append((cwd_path / arch_dir, f"{arch_dir}/"))
     
     md_files_list = []
     for scan_dir_path, label_str in scan_dirs_list:
@@ -1650,9 +1655,8 @@ def _handle_cli_pre_flows(cli_args: argparse.Namespace) -> bool:
     if cli_args.migrate:
         migrate_all_databases(Path.cwd())
         return True
-    if (cli_args.consolidate or cli_args.lexis_reset) and not cli_args.canal:
-        from lexis import consolidate_by_channel
-        consolidate_by_channel(str(Path.cwd()), reset_mode_bool=cli_args.lexis_reset)
+    if (cli_args.consolidar or cli_args.lexis_reset) and not cli_args.canal:
+        consolidar_por_canal(str(Path.cwd()), reset_mode_bool=cli_args.lexis_reset)
         return True
     return False
 
@@ -1773,8 +1777,8 @@ def _finish_session_flow(res_tuple: tuple, cli_args_ns: argparse.Namespace, cwd_
     dl_int, sk_int, er_int, tot_int, chan_tot_int, interrupted_bool = res_tuple
     print_section("Resumo Multi-Canal" if multi else "Resumo")
     print_summary(dl_int, sk_int, er_int, tot_int, chan_tot_int)
-    if (cli_args_ns.consolidate or cli_args_ns.lexis_reset) and not interrupted_bool:
-        consolidate_by_channel(str(cwd_path), reset_mode_bool=cli_args_ns.lexis_reset)
+    if (cli_args_ns.consolidar or cli_args_ns.lexis_reset):
+        consolidar_por_canal(str(cwd_path), reset_mode_bool=cli_args_ns.lexis_reset)
     if interrupted_bool:
         sys.exit(130)
 
