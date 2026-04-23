@@ -722,17 +722,31 @@ def _prepare_lexis_paths(channel_path_str: str, channel_name_str: str) -> Dict[s
 
 def _get_eligible_files(channel_path_str: str, channel_name_str: str) -> List[str]:
     """
-    Filtra apenas arquivos que seguem o padrão de nomenclatura do canal.
-    Ignora arquivos que já são Volumes (ex: -v001.txt).
+    Busca arquivos de transcrição (.txt, .srt, .md) na pasta do canal e no archive.
+    
+    POR QUE ISSO É NECESSÁRIO?
+    O usuário pode querer consolidar arquivos que já foram processados anteriormente 
+    e movidos para a pasta de arquivos mortos (archive).
     """
     # Regex que busca [Canal]--[ID_Video].[ext]
     pattern_obj: Pattern = re.compile(rf"^{re.escape(channel_name_str)}[-]+[A-Za-z0-9_-]{{9,15}}(?:-[a-zA-Z0-9-]+)?\.(txt|srt|md)$")
     vol_pattern_obj: Pattern = re.compile(rf"^{re.escape(channel_name_str)}-v\d{{3}}\.txt$")
     
-    eligible_files_list: List[str] = [
-        f for f in os.listdir(channel_path_str)
-        if pattern_obj.match(f) and not vol_pattern_obj.match(f)
-    ]
+    eligible_files_list: List[str] = []
+    
+    # 1. Busca na pasta principal
+    for f in os.listdir(channel_path_str):
+        if pattern_obj.match(f) and not vol_pattern_obj.match(f):
+            eligible_files_list.append(f)
+            
+    # 2. Busca na pasta 'archive'
+    archive_path: str = os.path.join(channel_path_str, ARCHIVE_DIR_NAME)
+    if os.path.exists(archive_path) and os.path.isdir(archive_path):
+        for f in os.listdir(archive_path):
+            if pattern_obj.match(f):
+                # Mantemos o prefixo 'archive/' para que o processador saiba onde ler
+                eligible_files_list.append(os.path.join(ARCHIVE_DIR_NAME, f))
+                
     eligible_files_list.sort()
     return eligible_files_list
 
@@ -882,13 +896,27 @@ def _get_ext_priority(filename_str: str) -> int:
 def _archive_files(source_dir_path_str: str, archive_dir_path_str: str, files_list_list: List[str]) -> None:
     """Move arquivos para a pasta 'archive' para manter a pasta principal limpa."""
     for f_str in files_list_list:
-        shutil.move(os.path.join(source_dir_path_str, f_str), os.path.join(archive_dir_path_str, f_str))
+        # Se o arquivo já está na pasta archive (prefixo detectado), não precisamos mover
+        if f_str.startswith(ARCHIVE_DIR_NAME + os.sep) or f_str.startswith(ARCHIVE_DIR_NAME + "/"):
+            continue
+            
+        src_p_str: str = os.path.join(source_dir_path_str, f_str)
+        dst_p_str: str = os.path.join(archive_dir_path_str, f_str)
         
-        # Se houver um arquivo .info.json acompanhando, movemos ele também
-        json_f_str: str = f_str.rsplit('.', 1)[0] + ".info.json"
-        json_p_str: str = os.path.join(source_dir_path_str, json_f_str)
-        if os.path.exists(json_p_str):
-            shutil.move(json_p_str, os.path.join(archive_dir_path_str, json_f_str))
+        # Garante que não tentaremos mover um arquivo para ele mesmo ou se ele não existir
+        if not os.path.exists(src_p_str) or os.path.abspath(src_p_str) == os.path.abspath(dst_p_str):
+            continue
+            
+        try:
+            shutil.move(src_p_str, dst_p_str)
+            
+            # Se houver um arquivo .info.json acompanhando, movemos ele também
+            json_f_str: str = f_str.rsplit('.', 1)[0] + ".info.json"
+            json_p_str: str = os.path.join(source_dir_path_str, json_f_str)
+            if os.path.exists(json_p_str):
+                shutil.move(json_p_str, os.path.join(archive_dir_path_str, json_f_str))
+        except Exception:
+            pass # Ignora erros de movimentação (ex: arquivo em uso)
 
 
 def _orchestrate_consolidation(channel_name_str: str, files_list_list: List[str], state_dict: Dict[str, Any], paths_dict: Dict[str, str], reset_mode_bool: bool) -> None:
