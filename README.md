@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Versão-2.6.0-blue?style=for-the-badge" alt="Versão">
+  <img src="https://img.shields.io/badge/Versão-2.6.1-blue?style=for-the-badge" alt="Versão">
   <img src="https://img.shields.io/badge/Python-3.13+-ffd343?style=for-the-badge&logo=python&logoColor=black" alt="Python">
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/Licença-MIT-green?style=for-the-badge" alt="Licença">
@@ -42,6 +42,7 @@ O output final é uma base de conhecimento limpa e otimizada, pronta para:
 *   **🧠 Motor de NLP Avançado**: Pipeline de 6 fases para limpeza de ruído, deduplicação de "muletas" orais e ancoragem temporal.
 *   **📁 Repositório Único Inteligente**: Banco de dados JSON amarrado ao nome da pasta (`escriba_[folder_name].json`), com migração e consolidação automática de bases legadas.
 *   **🎙️ Fallback de Áudio**: Se o vídeo não possui legendas, o Escriba extrai o áudio bruto (`.mp3`/`.m4a`) para processamento externo.
+*   **📚 Consolidação Inteligente (Lexis)**: Agrupamento automático em volumes de ~1.8MB com índices cronológicos e metadados enriquecidos para o NotebookLM.
 
 ---
 
@@ -67,7 +68,7 @@ O núcleo foi refatorado para seguir padrões rigorosos de qualidade Python (PEP
 *   `history.py`: Gestão de estado atômico e persistência JSON.
 *   `rules.py`: Motor de limpeza léxica e processamento de regras.
 *   `utils.py`: Sistema de design CLI e utilitários auxiliares.
-*   `lexis.py`: Motor nativo de consolidação em volumes massivos para o NotebookLM.
+*   `lexis.py`: Motor nativo de consolidação em volumes massivos; realiza enriquecimento de metadados e gera índices estruturados para o NotebookLM.
 
 ---
 
