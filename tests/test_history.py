@@ -55,25 +55,25 @@ class TestGetLatestJsonPath:
     O padrão oficial é escriba_<NomeDaPasta>.json.
     """
 
-    def test_retorna_oficial_quando_existe(self, tmp_path):
+    def test_retorna_oficial_quando_existe(self, tmp_path: Path):
         """Se o arquivo oficial existe, deve ser retornado diretamente."""
-        oficial = tmp_path / f"escriba_{tmp_path.name}.json"
-        oficial.write_text("{}")
-        assert get_latest_json_path(tmp_path) == oficial
+        official_path: Path = tmp_path / f"escriba_{tmp_path.name}.json"
+        official_path.write_text("{}")
+        assert get_latest_json_path(tmp_path) == official_path
 
-    def test_retorna_legado_quando_oficial_ausente(self, tmp_path):
+    def test_retorna_legado_quando_oficial_ausente(self, tmp_path: Path):
         """Sem o oficial, deve retornar o legado mais recente (escriba_*)."""
-        legado = tmp_path / "escriba_canalantigo.json"
-        legado.write_text("{}")
-        result = get_latest_json_path(tmp_path)
-        assert result == legado
+        legacy_path: Path = tmp_path / "escriba_canalantigo.json"
+        legacy_path.write_text("{}")
+        result_path: Path = get_latest_json_path(tmp_path)
+        assert result_path == legacy_path
 
-    def test_retorna_lista_legada_quando_unica_opcao(self, tmp_path):
+    def test_retorna_lista_legada_quando_unica_opcao(self, tmp_path: Path):
         """Deve aceitar o formato ainda mais antigo lista_*.json."""
-        lista = tmp_path / "lista_foo.json"
-        lista.write_text("{}")
-        result = get_latest_json_path(tmp_path)
-        assert result == lista
+        list_path: Path = tmp_path / "lista_foo.json"
+        list_path.write_text("{}")
+        result_path: Path = get_latest_json_path(tmp_path)
+        assert result_path == list_path
 
     def test_retorna_mais_recente_entre_multiplos_legados(self, tmp_path):
         """Com múltiplos legados, deve retornar o modificado mais recentemente."""
@@ -254,7 +254,7 @@ class TestSaveChannelStateJson:
     def test_salva_detected_language(self, tmp_path):
         """Campo detected_language deve estar presente quando informado."""
         json_path = tmp_path / "escriba_test.json"
-        save_channel_state_json(json_path, [], detected_language="pt")
+        save_channel_state_json(json_path, [], detected_language_str="pt")
         data = json.loads(json_path.read_text())
         assert data.get("detected_language") == "pt"
 
@@ -286,7 +286,7 @@ class TestSaveChannelStateJson:
 
         # Agora process_videos() de @CanalOriginal chama save_channel_state_json()
         # Esse save NÃO deve apagar @CanalNovo da lista
-        save_channel_state_json(json_path, [], youtube_channel="https://youtube.com/@CanalOriginal")
+        save_channel_state_json(json_path, [], youtube_channel_url_str="https://youtube.com/@CanalOriginal")
 
         data = json.loads(json_path.read_text())
         assert "youtube_channels" in data
@@ -309,14 +309,14 @@ class TestSaveChannelStateJson:
 
         # Primeiro save (processando @CanalA)
         save_channel_state_json(json_path, [{"video_id": "v1", "title": "A"}],
-                                youtube_channel="https://youtube.com/@CanalA")
+                                youtube_channel_url_str="https://youtube.com/@CanalA")
         data = json.loads(json_path.read_text())
         assert "@CanalA" in data["youtube_channels"]
         assert "@CanalB" in data["youtube_channels"]
 
         # Segundo save (processando @CanalB)
         save_channel_state_json(json_path, [{"video_id": "v2", "title": "B"}],
-                                youtube_channel="https://youtube.com/@CanalB")
+                                youtube_channel_url_str="https://youtube.com/@CanalB")
         data = json.loads(json_path.read_text())
         assert "@CanalA" in data["youtube_channels"]
         assert "@CanalB" in data["youtube_channels"]
@@ -468,7 +468,7 @@ class TestIntegracaoRegisterSave:
         save_channel_state_json(
             json_path,
             [{"video_id": "v_novo", "title": "Novo"}],
-            youtube_channel="https://youtube.com/@CanalNovo"
+            youtube_channel_url_str="https://youtube.com/@CanalNovo"
         )
 
         data = json.loads(json_path.read_text())

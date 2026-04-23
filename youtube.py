@@ -2,377 +2,330 @@ import os
 import sys
 import subprocess
 import json
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Any
-from datetime import datetime
-from collections import Counter
 import shutil
 import time
-import warnings
-from utils import print_ok, print_warn, print_info, print_err, ICON_WAIT, BOLD, RESET, WHITE, DIM, BCYAN
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional, Any
+from collections import Counter
+from utils import (
+    print_ok, print_warn, print_info, print_err, 
+    ICON_WAIT, BOLD, RESET, BCYAN, format_date
+)
 
-# Carregar NODE_PATH do .env se existir (evitando requests/carregamento duro na importação)
-NODE_PATH: str = os.getenv("NODE_PATH") or shutil.which("node") or ""
+"""
+MÓDULO YOUTUBE: A Ponte com a Internet
+--------------------------------------
+Este módulo é responsável por toda a comunicação externa com o YouTube.
+Ele utiliza a ferramenta 'yt-dlp' (um canivete suíço para vídeos) para:
+1. Descobrir quais vídeos um canal possui.
+2. Identificar qual o idioma predominante do canal.
+3. Baixar as legendas e informações técnicas de cada vídeo.
 
-def _refresh_cookies_on_error(cwd_path: Path, script_dir_path: Path) -> List[str]:
-    """Apaga cookies.txt e gera novamente, retornando os novos cookie_args."""
+Explicação para Juniores:
+O yt-dlp é um programa de linha de comando. Aqui, nós o chamamos via Python
+usando o módulo 'subprocess'. É como se o Python estivesse "digitando" no 
+terminal para nós.
+"""
+
+# O NODE_PATH é necessário porque algumas funções avançadas do yt-dlp 
+# rodam pequenos códigos Javascript para burlar proteções do YouTube.
+NODE_PATH_STR: str = os.getenv("NODE_PATH") or shutil.which("node") or ""
+
+
+def _refresh_cookies_on_error(cwd_path_obj: Path, script_dir_path_obj: Path) -> List[str]:
+    """
+    Técnica de Auto-Cura: Se o YouTube nos bloquear, tentamos renovar os cookies.
+    
+    Explicação para Juniores:
+    O YouTube usa cookies para saber que você não é um robô mal-intencionado. 
+    Às vezes esses cookies "vencem" (expiram) ou o YouTube desconfia do acesso. 
+    Apagar o arquivo antigo e pedir novos para o Chrome costuma resolver o problema.
+    """
     print_warn("Erro ao acessar YouTube. Tentando corrigir cookies...")
-    cookies_txt_path = cwd_path / "cookies.txt"
-    cookies_txt_path.unlink(missing_ok=True)
-    return configure_cookies(cwd_path, script_dir_path, force_refresh_cookies=True, silent=True)
+    cookies_path_obj: Path = cwd_path_obj / "cookies.txt"
+    cookies_path_obj.unlink(missing_ok=True)
+    return configure_cookies(cwd_path_obj, script_dir_path_obj, force_refresh_bool=True, silent_bool=True)
+
+
+def _get_python_executable(script_dir_path_obj: Path) -> Path:
+    """
+    Busca o Python dentro da 'bolha' (ambiente virtual) do projeto.
+    Isso garante que usaremos as bibliotecas corretas instaladas para o Escriba.
+    """
+    if os.name == "nt":  # Windows
+        return script_dir_path_obj / ".venv" / "Scripts" / "python.exe"
+    return script_dir_path_obj / ".venv" / "bin" / "python3"  # Mac/Linux
+
 
 def setup_environment() -> Tuple[Path, List[str]]:
     """
-    Valida e retorna o diretório do script e o comando base yt-dlp.
-    Descobre o executável Python no ambiente virtual (Cross-platform).
+    Prepara o terreno para o script rodar.
+    Retorna o caminho do script e o comando base para chamar o yt-dlp.
     """
-    script_dir_path: Path = Path(__file__).parent.resolve()
-    if os.name == "nt":
-        python_executable_path: Path = script_dir_path / ".venv" / "Scripts" / "python.exe"
-    else:
-        python_executable_path = script_dir_path / ".venv" / "bin" / "python3"
-
-    if not python_executable_path.is_file():
-        print_err(f"Ambiente virtual não encontrado em {python_executable_path}")
+    script_dir_path_obj: Path = Path(__file__).parent.resolve()
+    python_path_obj: Path = _get_python_executable(script_dir_path_obj)
+    
+    if not python_path_obj.is_file():
+        print_err(f"Ambiente virtual não encontrado em {python_path_obj}")
+        print_info("Dica: Rode 'python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt'")
         sys.exit(1)
-
-    yt_dlp_cmd_list: List[str] = [
-        str(python_executable_path), 
-        "-m", "yt_dlp", 
-        "--remote-components", "ejs:github"
-    ]
-    if NODE_PATH:
-        yt_dlp_cmd_list.extend(["--js-runtimes", f"node:{NODE_PATH}"])
         
-    return script_dir_path, yt_dlp_cmd_list
+    # Comando base configurado para rodar o yt-dlp como um módulo do Python
+    # Explicação para Juniores: Usamos '-m yt_dlp' para garantir que usamos a versão
+    # instalada no nosso ambiente virtual, e não uma versão global do sistema.
+    yt_dlp_cmd_list: List[str] = [str(python_path_obj), "-m", "yt_dlp", "--remote-components", "ejs:github"]
+    
+    if NODE_PATH_STR:
+        yt_dlp_cmd_list.extend(["--js-runtimes", f"node:{NODE_PATH_STR}"])
+        
+    return script_dir_path_obj, yt_dlp_cmd_list
 
-def configure_cookies(cwd_path: Path, script_dir_path: Path, force_refresh_cookies: bool, silent: bool = False) -> List[str]:
-    """Retorna argumentos de cookie para yt-dlp."""
-    cookies_file_path: Path = cwd_path / "cookies.txt"
 
-    if force_refresh_cookies:
-        if not silent: 
-            print_warn("--refresh-cookies ativo. Apagando cache antigo...")
-        cookies_file_path.unlink(missing_ok=True)
+def configure_cookies(
+    cwd_path_obj: Path, 
+    script_dir_path_obj: Path, 
+    force_refresh_bool: bool, 
+    silent_bool: bool = False
+) -> List[str]:
+    """
+    Configura os Cookies de acesso. 
+    Cookies são como 'crachás' que dizem ao YouTube que você é um usuário real.
+    """
+    cookies_path_obj: Path = cwd_path_obj / "cookies.txt"
+    
+    if force_refresh_bool:
+        if not silent_bool: 
+            print_warn("--refresh-cookies ativo. Renovando credenciais...")
+        cookies_path_obj.unlink(missing_ok=True)
+        
+    # Se já temos um arquivo de cookies válido na pasta, usamos ele (é mais rápido)
+    if _is_valid_cookie_file(cookies_path_obj):
+        if not silent_bool: 
+            print_info(f"Usando cookies em cache: {cookies_path_obj.name}")
+        return ["--cookies", str(cookies_path_obj)]
+        
+    # Se não houver cache, tentamos extrair do Chrome do usuário
+    if not silent_bool: 
+        print_warn(f"Extraindo novos cookies do Chrome → {cookies_path_obj.name}")
+    return ["--cookies-from-browser", "chrome", "--cookies", str(cookies_path_obj)]
 
-    if _is_valid_cookie_file(cookies_file_path):
-        if not silent: 
-            print_info(f"Cookies em cache: {cookies_file_path.name}")
-        return ["--cookies", str(cookies_file_path)]
-    elif cookies_file_path.is_file():
-        if not silent: 
-            print_warn(f"Cache de cookies corrompido detectado e removido: {cookies_file_path.name}")
-        cookies_file_path.unlink()
 
-    global_script_cookies_path: Path = script_dir_path / "cookies.txt"
-    if global_script_cookies_path.is_file() and not force_refresh_cookies:
-        if not silent: 
-            print_info("Cookies do diretório do script.")
-        return ["--cookies", str(global_script_cookies_path)]
-
-    if not silent: 
-        print_warn(f"Extraindo cookies do Chrome → {cookies_file_path.name}")
-    return ["--cookies-from-browser", "chrome", "--cookies", str(cookies_file_path)]
-
-def _is_valid_cookie_file(path: Path) -> bool:
-    """Extraído para facilitar a validação do state de cookies."""
-    if not path.is_file(): 
+def _is_valid_cookie_file(path_obj: Path) -> bool:
+    """Verifica se o arquivo de cookies não está vazio e tem formato Netscape."""
+    if not path_obj.is_file(): 
         return False
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read(100)
-            if not content.strip() or "Netscape" in content or "TRUE" in content:
-                return True
+        with open(path_obj, "r", encoding="utf-8") as file_descriptor_obj:
+            content_snippet_str: str = file_descriptor_obj.read(100)
+            return "Netscape" in content_snippet_str or "TRUE" in content_snippet_str
     except Exception:
-        pass
-    return False
+        return False
 
-def filter_youtube_cookies(cookies_path: Path) -> None:
-    if not cookies_path.is_file():
-        return
-    try:
-        with open(cookies_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        
-        filtered_lines: List[str] = []
-        for line in lines:
-            if line.startswith("#") or not line.strip():
-                filtered_lines.append(line)
-                continue
-            
-            parts = line.split('\t')
-            if len(parts) >= 6:
-                domain = parts[0].strip()
-                if "youtube.com" in domain or "google.com" in domain:
-                    filtered_lines.append(line)
-        
-        with open(cookies_path, "w", encoding="utf-8") as f:
-            f.writelines(filtered_lines)
-    except Exception as e:
-        print_warn(f"Falha ao filtrar cookies {cookies_path.name}: {e}")
 
-def detect_language(yt_dlp_cmd_list: List[str], cookie_args_list: List[str], channel_url: str, cached_lang: Optional[str] = None) -> str:
-    """Detecta o idioma predominante do canal com 5 samples."""
-    if cached_lang and cached_lang != "N/A":
-        print_ok(f"Usando idioma em cache: {BOLD}{cached_lang.strip('^$')}{RESET}")
-        return cached_lang
-
-    print_info("Detectando idioma nativo (amostragem de 5 vídeos)...")
+def detect_language(
+    yt_dlp_cmd_list: List[str], 
+    cookie_args_list: List[str], 
+    channel_url_str: str, 
+    cached_lang_str: Optional[str] = None
+) -> str:
+    """
+    Estratégia: Em vez de ler todos os vídeos, olhamos apenas os 5 mais recentes.
     
-    global_default_lang: str = os.getenv("DEFAULT_LANGUAGE") or os.getenv("LANG") or "pt"
-    if global_default_lang and len(global_default_lang) > 2:
-        global_default_lang = global_default_lang[:2].lower()
-
-    detect_url: str = channel_url
-    if "watch?v=" not in detect_url and "playlist?list=" not in detect_url:
-        is_generic_channel: bool = True
-        for suffix in ["/videos", "/shorts", "/streams", "/live"]:
-            if detect_url.endswith(suffix):
-                is_generic_channel = False
-                break
-        if is_generic_channel:
-            detect_url = detect_url.rstrip("/") + "/videos"
-
-    cmd: List[str] = yt_dlp_cmd_list + cookie_args_list + [
-        "--print", "language",
-        "--playlist-end", "5",
-        "--ignore-errors",
-        "--flat-playlist", 
-        detect_url
-    ]
-
-    detected_languages: List[str] = []
-    try:
-        subprocess_result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-        detected_languages = [lang.strip().lower() for lang in subprocess_result.stdout.splitlines() if lang.strip()]
+    Explicação para Juniores:
+    Se um canal tem 1000 vídeos, demoraria muito para descobrir o idioma de todos.
+    Partimos do princípio que o dono do canal não mudou de língua nos últimos 5 vídeos.
+    Essa técnica de olhar apenas uma parte do todo se chama 'amostragem'.
+    """
+    if cached_lang_str and cached_lang_str != "N/A":
+        print_ok(f"Idioma em cache: {BOLD}{cached_lang_str.strip('^$')}{RESET}")
+        return cached_lang_str
         
-        if not detected_languages:
-            if "--flat-playlist" in cmd: 
-                cmd.remove("--flat-playlist")
-            if "--playlist-end" in cmd:
-                idx = cmd.index("--playlist-end")
-                cmd[idx + 1] = "3"
-            
-            subprocess_result = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
-            detected_languages = [lang.strip().lower() for lang in subprocess_result.stdout.splitlines() if lang.strip()]
-            
-        invalid_tags: set = {"na", "n/a", "none", "null", "undefined"}
-        detected_languages = [l for l in detected_languages if l not in invalid_tags]
-    except Exception as e:
-        print_warn(f"Erro na rotina de detecção automática: {e}")
-        # Retentativa com cookies novos
-        try:
-            new_cookie_args = _refresh_cookies_on_error(Path.cwd(), Path(__file__).parent.resolve())
-            # Atualiza o comando com os novos cookies
-            # Nota: Isso é complexo pois temos que achar onde os cookies estavam no cmd
-            # Simplificação: Detect language é um warm up, vamos apenas avisar.
-        except Exception:
-            pass
-
-    if detected_languages:
-        most_common_lang, count = Counter(detected_languages).most_common(1)[0]
-        clean_lang = most_common_lang.split("-")[0].split("_")[0]
-        language_regex_filter = f"^{clean_lang}$"
-        print_ok(f"Idioma detectado ({count}/{len(detected_languages)}): {BOLD}{clean_lang}{RESET} {DIM}(filtro: {language_regex_filter}){RESET}")
-        return language_regex_filter
-
-    print_warn(f"Não foi possível detectar o idioma. Assumindo fallback: {BOLD}{global_default_lang}{RESET}")
-    print_info(f"Dica: utilize {WHITE}--lang [código]{RESET} para forçar um idioma específico.")
-    return f"^{global_default_lang}$"
-
-def get_video_exact_date(video_id: str, yt_dlp_cmd_list: List[str], cookie_args_list: List[str]) -> Dict[str, str]:
+    print_info("Detectando idioma do canal (amostragem de 5 vídeos)...")
+    
+    # URL formatada para pegar a lista de vídeos
+    detect_url_str: str = channel_url_str.rstrip("/") + "/videos" if "watch?v=" not in channel_url_str else channel_url_str
+    
     cmd_list: List[str] = yt_dlp_cmd_list + cookie_args_list + [
-        "--dump-json",
-        "--skip-download",
-        "--ignore-errors",
-        "--remote-components", "ejs:github",
-        f"https://www.youtube.com/watch?v={video_id}"
+        "--print", "language", 
+        "--playlist-end", "5", 
+        "--ignore-errors", 
+        "--flat-playlist", 
+        detect_url_str
     ]
-    def _run_dump():
-        return subprocess.run(cmd_list, capture_output=True, text=True, timeout=30)
-
+    
     try:
-        process_instance = _run_dump()
-        if process_instance.returncode != 0:
-            new_cookies = _refresh_cookies_on_error(Path.cwd(), Path(__file__).parent.resolve())
-            # Reconstruct cmd_list with new cookies (cookie_args_list items are removed/replaced)
-            # This is tricky because meta_cmd is passed from outside too.
-            # Simplified: we just re-run with force refresh already happened.
-            process_instance = _run_dump()
+        process_result_obj = subprocess.run(cmd_list, capture_output=True, text=True, timeout=20)
+        langs_list: List[str] = [
+            line_str.strip().lower() 
+            for line_str in process_result_obj.stdout.splitlines() 
+            if line_str.strip() and line_str.lower() not in ("na", "none")
+        ]
+        
+        if langs_list:
+            # Pega o idioma que mais apareceu na amostra
+            most_common_tuple: Tuple[str, int] = Counter(langs_list).most_common(1)[0]
+            most_common_lang_str: str = most_common_tuple[0]
+            clean_lang_str: str = most_common_lang_str.split("-")[0].split("_")[0]
+            print_ok(f"Idioma detectado: {BOLD}{clean_lang_str}{RESET}")
+            return f"^{clean_lang_str}$"
             
-        if process_instance.stdout:
-            video_json_dict = json.loads(process_instance.stdout)
-            upload_date_string = video_json_dict.get("upload_date", "N/A")
-            if upload_date_string and len(upload_date_string) == 8:
-                upload_date_string = f"{upload_date_string[:4]}-{upload_date_string[4:6]}-{upload_date_string[6:]}"
-            return {"id": video_id, "date": upload_date_string, "title": video_json_dict.get("title", "N/A")}
-    except Exception:
-        pass
-    return {"id": video_id, "date": "N/A", "title": "N/A"}
+    except Exception as error_obj:
+        print_warn(f"Erro na detecção de idioma: {error_obj}")
+        
+    fallback_lang_str: str = os.getenv("DEFAULT_LANGUAGE", "pt")
+    print_warn(f"Idioma não detectado. Usando padrão: {BOLD}{fallback_lang_str}{RESET}")
+    return f"^{fallback_lang_str}$"
+
 
 def generate_fast_list_json(
-    yt_dlp_cmd_list: List[str],
-    cookie_args_list: List[str],
-    channel_url: str,
-    local_history_map: Optional[Dict[str, Any]] = None
+    yt_dlp_cmd_list: List[str], 
+    cookie_args_list: List[str], 
+    channel_url_str: str, 
+    history_dict: Optional[Dict[str, Any]] = None
 ) -> List[Dict[str, Any]]:
-    """Descoberta rápida com base na flag --flat-playlist do youtube-dl"""
-    print_info(f"Fase 1: Descoberta de IDs + Metadados ({BOLD}{channel_url}{RESET})...")
-    def _run_discovery(current_cookies: List[str]):
-        cmd = yt_dlp_cmd_list + current_cookies + [
-            "--flat-playlist",
-            "--dump-json",
-            "--ignore-errors",
-            "--remote-components", "ejs:github",
-            channel_url
-        ]
-        local_vids: List[Dict[str, Any]] = []
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        for line in p.stdout:
-            _parse_flat_playlist_line(line, local_history_map, local_vids)
-        p.wait()
-        return p.returncode, local_vids
-
-    try:
-        ret_code, raw_video_list = _run_discovery(cookie_args_list)
-        if ret_code != 0 or not raw_video_list:
-            # Se falhou ou veio vazio, tenta corrigir cookies e retentar
-            _refresh_cookies_on_error(Path.cwd(), Path(__file__).parent.resolve())
-            print_info("Retentando descoberta...")
-            # Pega cookies novos silenciosamente
-            new_cookies = configure_cookies(Path.cwd(), Path(__file__).parent.resolve(), False, silent=True)
-            ret_code, raw_video_list = _run_discovery(new_cookies)
-    except Exception as error_msg:
-        print()
-        print_warn(f"Erro na descoberta: {error_msg}")
-        return []
-
-    print()
-    if not raw_video_list:
-        print_warn("Nenhum vídeo encontrado para mapear state JSON.")
-        return []
-
-    has_dates_count = sum(1 for v in raw_video_list if v["publish_date"] != "N/A")
-    print_ok(f"Descoberta completa: {has_dates_count}/{len(raw_video_list)} com data no índice.")
-    print_info("O restante terá metadados recuperados se não estiverem no cache.")
-
-    return [
-        {
-            "video_id": v["id"],
-            "publish_date": v["publish_date"],
-            "title": v["title"],
-            "subtitle_downloaded": False,
-            "info_downloaded": False,
-            "has_no_subtitle": False,
-        }
-        for v in raw_video_list
+    """
+    FASE DE DESCOBERTA (Discovery)
+    -----------------------------
+    Varre o canal e cria uma lista de todos os vídeos disponíveis.
+    Usa a flag '--flat-playlist' para não baixar detalhes pesados, apenas ID e Título.
+    """
+    print_info(f"Fase 1: Mapeando vídeos do canal...")
+    
+    cmd_list: List[str] = yt_dlp_cmd_list + cookie_args_list + [
+        "--flat-playlist", "--dump-json", "--ignore-errors", channel_url_str
     ]
-
-def _parse_flat_playlist_line(line_content: str, local_history_map: Optional[Dict[str, Any]], raw_video_list: List[Dict[str, Any]]) -> None:
-    """Extraído para reduzir indentação complexa no parse do yt-dlp."""
+    videos_found_list: List[Dict[str, Any]] = []
+    
     try:
-        obj = json.loads(line_content.strip())
-        video_id = obj.get("id") or obj.get("url")
-        if not video_id:
-            return
+        # Popen permite que leiamos a saída do comando enquanto ele ainda está rodando (streaming)
+        # Explicação para Juniores: 
+        # Diferente do 'subprocess.run' (que espera o comando acabar), o 'Popen' abre um 
+        # "cano" (pipe) de comunicação. Conforme o yt-dlp descobre um vídeo, ele "gospe" 
+        # a informação no cano e nós pegamos na mesma hora. Assim o usuário vê o contador 
+        # subindo em tempo real.
+        process_obj = subprocess.Popen(
+            cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+        )
+        
+        if process_obj.stdout:
+            for line_str in process_obj.stdout:
+                try:
+                    video_data_dict: Dict = json.loads(line_str.strip())
+                    video_id_str: str = video_data_dict.get("id", "")
+                    if not video_id_str: 
+                        continue
+                    
+                    # Extrai e formata a data usando a utilidade centralizada
+                    raw_date_any = video_data_dict.get("upload_date") or video_data_dict.get("publish_date") or video_data_dict.get("date")
+                    if not raw_date_any and history_dict:
+                        publish_date_str = history_dict.get(video_id_str, {}).get("publish_date", "Desconhecida")
+                    else:
+                        publish_date_str = format_date(raw_date_any)
+                    
+                    videos_found_list.append({
+                        "video_id": video_id_str,
+                        "title": video_data_dict.get("title") or "N/A",
+                        "publish_date": publish_date_str,
+                        "subtitle_downloaded": False,
+                        "info_downloaded": False,
+                        "has_no_subtitle": False
+                    })
+                    
+                    # Feedback visual de progresso na mesma linha
+                    sys.stdout.write(f"\r{ICON_WAIT}  {BCYAN}Vídeos mapeados: {len(videos_found_list)}{RESET}")
+                    sys.stdout.flush()
+                    
+                except Exception:
+                    continue
+                    
+        process_obj.wait()
+        print()  # Quebra de linha após o contador
+        
+        if process_obj.returncode != 0 and not videos_found_list:
+            _refresh_cookies_on_error(Path.cwd(), Path(__file__).parent.resolve())
             
-        if "watch?v=" in video_id:
-            video_id = video_id.split("watch?v=")[-1].split("&")[0]
-        elif video_id.startswith("http"):
-            video_id = video_id.split("/")[-1]
-
-        title = obj.get("title") or obj.get("fulltitle") or "N/A"
-        raw_date = obj.get("upload_date") or ""
+        return videos_found_list
         
-        if not raw_date:
-            ts = obj.get("timestamp")
-            if ts:
-                raw_date = datetime.utcfromtimestamp(int(ts)).strftime("%Y%m%d")
-        
-        publish_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]}" if len(str(raw_date)) == 8 else "N/A"
-
-        if publish_date == "N/A" and local_history_map and video_id in local_history_map:
-            hist_entry = local_history_map[video_id]
-            if hist_entry.get("publish_date") and hist_entry["publish_date"] != "N/A":
-                publish_date = hist_entry["publish_date"]
-
-        raw_video_list.append({"id": video_id, "title": title, "publish_date": publish_date})
-        sys.stdout.write(f"\r{ICON_WAIT}  {BCYAN}IDs encontrados: {len(raw_video_list)}{RESET}")
-        sys.stdout.flush()
-    except Exception:
-        pass
+    except Exception as error_obj:
+        print_err(f"Falha crítica na descoberta: {error_obj}")
+        return []
 
 
 def download_video(
-    yt_dlp_cmd_list: List[str],
-    cookie_args_list: List[str],
-    video_id: str,
-    language_opt_string: str,
-    channel_dir_name: str,
-    audio_only_flag: bool,
-    output_dir_path: Optional[Path] = None,
-    mp3_flag: bool = False,
+    yt_dlp_cmd_list: List[str], 
+    cookie_args_list: List[str], 
+    video_id_str: str, 
+    lang_filter_str: str, 
+    folder_name_str: str
 ) -> int:
     """
-    Baixa legendas ou áudio de um vídeo específico usando yt-dlp.
-    Inclui lógica de retentativa com regeneração de cookies em caso de erro.
+    BAIXA OS ARQUIVOS DO VÍDEO
+    --------------------------
+    Baixa o .info.json (metadados) e as legendas (.srt).
+    Não baixa o vídeo (MP4), pois só queremos o texto.
     """
-    # Naming convention: Título para áudio, [Channel]-[ID] para legendas
-    if audio_only_flag:
-        output_template_string = "%(title)s.%(ext)s"
-    else:
-        output_template_string = f"{channel_dir_name}-{video_id}"
+    output_template_str: str = f"{folder_name_str}-{video_id_str}"
+    
+    # Explicação dos parâmetros yt-dlp:
+    # --skip-download: Não baixa o vídeo/áudio (economiza GBs de espaço).
+    # --write-auto-sub: Baixa legendas geradas automaticamente pelo YouTube.
+    # --convert-subs srt: Converte VTT para SRT (formato mais simples de ler).
+    # --write-info-json: Salva todos os detalhes do vídeo em um arquivo JSON.
+    
+    cmd_list: List[str] = yt_dlp_cmd_list + cookie_args_list + [
+        "--ignore-no-formats-error",
+        "--write-info-json",
+        "--restrict-filenames",
+        "--skip-download",
+        "--write-auto-sub",
+        "--convert-subs", "srt",
+        "--sub-langs", lang_filter_str,
+        "-o", output_template_str,
+        f"https://www.youtube.com/watch?v={video_id_str}"
+    ]
+    
+    try:
+        process_result_obj = subprocess.run(cmd_list)
+        
+        # Se falhou, pode ser cookie expirado. Tenta renovar UMA vez.
+        if process_result_obj.returncode != 0:
+            new_cookies_args_list: List[str] = _refresh_cookies_on_error(
+                Path.cwd(), Path(__file__).parent.resolve()
+            )
+            # Reconstrói o comando com os novos cookies
+            cmd_with_new_cookies_list: List[str] = yt_dlp_cmd_list + new_cookies_args_list + cmd_list[len(yt_dlp_cmd_list) + len(cookie_args_list):]
+            process_result_obj = subprocess.run(cmd_with_new_cookies_list)
+            
+        return process_result_obj.returncode
+    except Exception as error_obj:
+        print_err(f"Erro ao baixar vídeo {video_id_str}: {error_obj}")
+        return 1
 
-    if output_dir_path:
-        output_template_string = str(output_dir_path / output_template_string)
 
-    # Base arguments
-    download_cmd_list = (
-        yt_dlp_cmd_list
-        + ["--js-runtimes", f"node:{NODE_PATH}"]
-        + ["--ignore-no-formats-error"]
-        + ["--write-info-json"]
-        + ["--restrict-filenames"]
-    )
+def filter_youtube_cookies(cookies_path_obj: Path) -> None:
+    """
+    PROTEÇÃO DE PRIVACIDADE E LIMPEZA
+    ---------------------------------
+    Remove cookies que não são do YouTube ou Google do arquivo extraído.
+    Isso evita enviar rastreadores desnecessários para o YouTube e mantém
+    o arquivo de cookies leve e focado.
+    """
+    if not cookies_path_obj.exists():
+        return
 
-    # Audio vs Subtitles logic
-    if mp3_flag:
-        download_cmd_list += [
-            "--extract-audio",
-            "--audio-format", "mp3",
-            "--audio-quality", "0",
-        ]
-    elif audio_only_flag:
-        download_cmd_list += ["-f", "ba[ext=webm]"]
-    else:
-        download_cmd_list += ["--skip-download", "--write-auto-sub", "--convert-subs", "srt"]
-        download_cmd_list += ["--sub-langs", language_opt_string]
+    try:
+        with open(cookies_path_obj, "r", encoding="utf-8") as file_descriptor_obj:
+            lines_list: List[str] = file_descriptor_obj.readlines()
 
-    # Output and URL
-    base_cmd = download_cmd_list + ["-o", output_template_string, f"https://www.youtube.com/watch?v={video_id}"]
+        filtered_lines_list: List[str] = []
+        for line_str in lines_list:
+            # Mantém comentários (que explicam o formato) e domínios relevantes
+            if line_str.startswith("#") or "youtube.com" in line_str or "google.com" in line_str:
+                filtered_lines_list.append(line_str)
 
-    def _run_download(current_cookies: List[str]) -> int:
-        cmd = base_cmd + current_cookies
-        proc = subprocess.Popen(cmd)
-        try:
-            return proc.wait()
-        except KeyboardInterrupt:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            raise
-
-    # Primeira tentativa
-    exit_code = _run_download(cookie_args_list)
-
-    # Retentativa se falhar (exit code não zero)
-    if exit_code != 0:
-        cwd_path = Path.cwd()
-        script_dir_path = Path(__file__).parent.resolve()
-        new_cookies = _refresh_cookies_on_error(cwd_path, script_dir_path)
-        print_info("Retentando download...")
-        exit_code = _run_download(new_cookies)
-
-    return exit_code
+        with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:
+            file_descriptor_obj.writelines(filtered_lines_list)
+            
+    except Exception as error_obj:
+        # Se falhar a limpeza, não paramos o script, apenas avisamos.
+        print_warn(f"Aviso: Não foi possível filtrar o arquivo de cookies: {error_obj}")

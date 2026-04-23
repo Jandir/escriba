@@ -40,6 +40,10 @@ _venv_python = _venv_bin / ("python.exe" if os.name == "nt" else "python3")
 
 if _venv_python.exists() and Path(sys.executable).resolve() != _venv_python.resolve():
     try:
+        # EXPLICAÇÃO PARA JUNIORES:
+        # Aqui, estamos trocando o "motor" do Python. Se o script começou com o Python
+        # do sistema, nós o paramos e reiniciamos usando o Python que está dentro da
+        # nossa pasta .venv, onde todas as ferramentas necessárias estão instaladas.
         os.execv(str(_venv_python), [str(_venv_python)] + sys.argv)
     except Exception:
         pass # Fallback suave
@@ -61,10 +65,10 @@ import shutil
 import time
 import functools
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from utils import print_ok, print_err, print_warn, print_info, print_skip, print_dl, print_section, print_header, print_countdown, BOLD, RESET, DIM, GREEN, RED, YELLOW, BLUE, WHITE, BCYAN, BWHITE, BRED, BGREEN, BYELLW, ICON_OK, ICON_ERR, ICON_WARN, ICON_SKIP, ICON_DL, ICON_WAIT, ICON_INFO
+from utils import print_ok, print_err, print_warn, print_info, print_skip, print_dl, print_section, print_header, print_countdown, extract_video_id, format_date, BOLD, RESET, DIM, GREEN, RED, YELLOW, BLUE, WHITE, BCYAN, BWHITE, BRED, BGREEN, BYELLW, ICON_OK, ICON_ERR, ICON_WARN, ICON_SKIP, ICON_DL, ICON_WAIT, ICON_INFO
 from rules import clean_ekklezia_terms
 from history import get_latest_json_path, load_all_local_history, save_channel_state_json, auto_migrate_legacy_files, migrate_all_databases, filter_state_list, register_channel_in_json
-from youtube import setup_environment, configure_cookies, filter_youtube_cookies, detect_language, get_video_exact_date, generate_fast_list_json, download_video
+from youtube import setup_environment, configure_cookies, filter_youtube_cookies, detect_language, generate_fast_list_json, download_video
 from datetime import datetime
 from dataclasses import dataclass
 from lexis import consolidate_by_channel
@@ -108,11 +112,11 @@ NODE_PATH = os.getenv("NODE_PATH") or shutil.which("node") or ""
 
 def _extract_video_meta_cli(vid_id_str: str, cmd_list: list[str], cookie_args_list: list[str]) -> tuple[str | None, str | None]:
     """Executa comando yt-dlp para extrair metadados de vídeo único."""
-    meta_cmd_list = cmd_list + cookie_args_list + ["--dump-json", "--skip-download", f"https://www.youtube.com/watch?v={vid_id_str}"]
+    meta_cmd_list: list[str] = cmd_list + cookie_args_list + ["--dump-json", "--skip-download", f"https://www.youtube.com/watch?v={vid_id_str}"]
     try:
-        proc_res = subprocess.run(meta_cmd_list, capture_output=True, text=True, timeout=15)
-        if proc_res.stdout:
-            meta_dict = json.loads(proc_res.stdout)
+        proc_res_obj = subprocess.run(meta_cmd_list, capture_output=True, text=True, timeout=15)
+        if proc_res_obj.stdout:
+            meta_dict: dict = json.loads(proc_res_obj.stdout)
             return meta_dict.get("uploader_id"), meta_dict.get("channel_id")
     except Exception: pass
     return None, None
@@ -153,12 +157,12 @@ def _extract_playlist_meta_cli(url_str: str, cmd_list: list[str], cookie_args_li
 
 def _identify_playlist_source(url_str: str, history_dict: dict, cmd_list: list[str], cookie_args_list: list[str]) -> tuple[str | None, str, str | None, str | None]:
     """Extrai metadados quando a origem é uma playlist."""
-    match = re.search(r"list=([A-Za-z0-9_-]+)", url_str)
-    list_id_str = match.group(1) if match else "playlist"
+    match_obj = re.search(r"list=([A-Za-z0-9_-]+)", url_str)
+    list_id_str: str = match_obj.group(1) if match_obj else "playlist"
     
     for _, ent_dict in history_dict.items():
         if "playlists" in ent_dict and list_id_str in ent_dict["playlists"]:
-            up_id_str = ent_dict.get("uploader_id")
+            up_id_str: str = ent_dict.get("uploader_id", "")
             if up_id_str:
                 print_ok(f"Dono da playlist identificado (cache local): {BOLD}@{up_id_str.lstrip('@')}{RESET}")
                 return up_id_str.lstrip("@"), list_id_str, ent_dict.get("channel_id"), up_id_str
@@ -234,17 +238,17 @@ def _add_new_entry(state_dict: dict, vid_id_str: str, entry_dict: dict, playlist
 
 def _import_reverse_history(state_dict: dict[str, dict], history_dict: dict, chan_id_str: str | None, up_id_str: str | None, name_str: str | None, tag_str: str | None) -> int:
     """Importa vídeos do histórico global que pertencem ao canal atual mas sumiram do YT."""
-    imp_count_int = 0
+    imp_count_int: int = 0
     for vid_id_str, hist_dict in history_dict.items():
         if vid_id_str in state_dict:
             continue
         
-        is_same_bool = (chan_id_str and hist_dict.get("channel_id") == chan_id_str) or \
-                       (up_id_str and hist_dict.get("uploader_id") == up_id_str) or \
-                       (name_str and name_str.lower() in str(hist_dict.get("uploader", "")).lower())
+        is_same_bool: bool = (chan_id_str and hist_dict.get("channel_id") == chan_id_str) or \
+                             (up_id_str and hist_dict.get("uploader_id") == up_id_str) or \
+                             (name_str and name_str.lower() in str(hist_dict.get("uploader", "")).lower())
         
         if is_same_bool:
-            new_entry_dict = hist_dict.copy()
+            new_entry_dict: dict = hist_dict.copy()
             if tag_str and not new_entry_dict.get("source_channel"):
                 new_entry_dict["source_channel"] = tag_str
             state_dict[vid_id_str] = new_entry_dict
@@ -314,7 +318,7 @@ def load_or_create_channel_state(
     if only_peek_lang_bool: return json_path, [], lang_cached_str, 0
 
     state_dict = _load_existing_state_map(json_path)
-    yt_list = generate_fast_list_json(cmd_list, cookies_list, url_str, local_history_map=hist_dict)
+    yt_list = generate_fast_list_json(cmd_list, cookies_list, url_str, history_dict=hist_dict)
     if not yt_list and not state_dict: return None, [], lang_cached_str, 0
 
     tag_str = f"@{name_str}" if name_str and name_str != "canal" else None
@@ -410,61 +414,66 @@ def get_merged_stopwords(lang_code_str: str) -> frozenset:
 
 
 
-def _strip_rollup(text: str, prev_text: str, overlap_ratio: float = 0.5) -> str:
+def _strip_rollup(text_str: str, prev_text_str: str, overlap_ratio_float: float = 0.5) -> str:
     """Remove do início de 'text' a porção que já foi vista em 'prev_text'."""
-    prev_tokens, cur_tokens = prev_text.split(), text.split()
-    if not prev_tokens or not cur_tokens: return text
-    overlap = 0
-    for i, token in enumerate(cur_tokens):
-        if i < len(prev_tokens) and token == prev_tokens[i]: overlap += 1
+    prev_tokens_list, cur_tokens_list = prev_text_str.split(), text_str.split()
+    if not prev_tokens_list or not cur_tokens_list: return text_str
+    overlap_int: int = 0
+    for i_int, token_str in enumerate(cur_tokens_list):
+        if i_int < len(prev_tokens_list) and token_str == prev_tokens_list[i_int]: overlap_int += 1
         else: break
-    return "" if overlap / len(cur_tokens) > overlap_ratio else " ".join(cur_tokens[overlap:])
+    return " ".join(cur_tokens_list[overlap_int:])
 
 def _calc_total_seconds(pysrt_time) -> int:
     """Converte tempo pysrt para segundos totais."""
     return pysrt_time.hours * 3600 + pysrt_time.minutes * 60 + pysrt_time.seconds
 
 
-def _smart_ts(pysrt_time) -> str:
+def _smart_ts(pysrt_time_obj) -> str:
     """HH:MM:SS só quando necessário (≥1h), senão MM:SS."""
-    total_s_int = _calc_total_seconds(pysrt_time)
+    total_s_int = _calc_total_seconds(pysrt_time_obj)
     h_int, rem_int = divmod(total_s_int, 3600)
     m_int, s_int = divmod(rem_int, 60)
     return f"{h_int:02d}:{m_int:02d}:{s_int:02d}" if h_int else f"{m_int:02d}:{s_int:02d}"
 
-def _seg_keywords(seg_wins: list, tfidf_vec, tfidf_mat, win_indices: list[int], oral_stopwords: frozenset, top_n: int = 3) -> str:
+def _seg_keywords(seg_wins_list: list, tfidf_vec_obj, tfidf_mat_obj, win_indices_list: list[int], oral_stopwords_set: frozenset, top_n_int: int = 3) -> str:
     """Extrai as top-N palavras-chave do segmento via TF-IDF."""
     import numpy as np
-    feature_names = tfidf_vec.get_feature_names_out()
-    seg_vector = np.asarray(tfidf_mat[win_indices, :].sum(axis=0)).flatten()
-    top_indices = seg_vector.argsort()[::-1]
-    keywords = []
-    for i in top_indices:
-        word = feature_names[i]
-        if len(word) > 2 and word.lower() not in oral_stopwords and word.isalpha():
-            keywords.append(word.lower())
-        if len(keywords) >= top_n: break
-    return " · ".join(keywords) if keywords else ""
+    feature_names_list = tfidf_vec_obj.get_feature_names_out()
+    seg_vector_obj = np.asarray(tfidf_mat_obj[win_indices_list, :].sum(axis=0)).flatten()
+    top_indices_list = seg_vector_obj.argsort()[::-1]
+    keywords_list: list[str] = []
+    for i_int in top_indices_list:
+        word_str: str = feature_names_list[i_int]
+        if len(word_str) > 2 and word_str.lower() not in oral_stopwords_set and word_str.isalpha():
+            keywords_list.append(word_str.lower())
+        if len(keywords_list) >= top_n_int: break
+    return " · ".join(keywords_list) if keywords_list else ""
 
-def create_adaptive_windows(subs, window_size_s: int) -> list[dict]:
+def create_adaptive_windows(subs_list, window_size_s_int: int) -> list[dict]:
     """Agrupa legendas em janelas temporais adaptativas."""
-    windows = []
-    current_window_subs = []
-    start_time = subs[0].start
-    prev_sub_text = ""
-    for sub in subs:
-        raw_text = re.sub(r"<[^>]+>", "", sub.text.replace('\n', ' ')).strip()
-        clean_text = _strip_rollup(raw_text, prev_sub_text)
-        if clean_text:
-            prev_sub_text = raw_text
-            sub._clean_text = clean_text
-            current_window_subs.append(sub)
-        if (sub.end - start_time).seconds > window_size_s and current_window_subs:
-            w_text = " ".join(s._clean_text for s in current_window_subs if s._clean_text)
-            if w_text:
-                windows.append({'text': w_text, 'timestamp': str(current_window_subs[0].start).split(',')[0], 'subs': current_window_subs})
-            current_window_subs, start_time = [], sub.start
-    return windows
+    windows_list: list[dict] = []
+    current_window_subs_list: list = []
+    start_time_obj = subs_list[0].start
+    prev_sub_text_str: str = ""
+    for sub_obj in subs_list:
+        raw_text_str: str = re.sub(r"<[^>]+>", "", sub_obj.text.replace('\n', ' ')).strip()
+        clean_text_str: str = _strip_rollup(raw_text_str, prev_sub_text_str)
+        if clean_text_str:
+            prev_sub_text_str = raw_text_str
+            sub_obj._clean_text = clean_text_str
+            current_window_subs_list.append(sub_obj)
+        if (sub_obj.end - start_time_obj).seconds > window_size_s_int and current_window_subs_list:
+            w_text_str: str = " ".join(s._clean_text for s in current_window_subs_list if hasattr(s, '_clean_text'))
+            if w_text_str:
+                windows_list.append({'text': w_text_str, 'timestamp': str(current_window_subs_list[0].start).split(',')[0], 'subs': current_window_subs_list})
+            current_window_subs_list, start_time_obj = [], sub_obj.start
+    if current_window_subs_list:
+        w_text_str: str = " ".join(s._clean_text for s in current_window_subs_list if hasattr(s, '_clean_text'))
+        if w_text_str:
+            windows_list.append({'text': w_text_str, 'timestamp': str(current_window_subs_list[0].start).split(',')[0], 'subs': current_window_subs_list})
+    
+    return windows_list
 
 def get_adaptive_config(total_duration_s: int) -> tuple[int, float, int]:
     """Calcula parâmetros adaptativos baseados na duração do vídeo."""
@@ -492,18 +501,18 @@ def detect_topic_breaks(tfidf_matrix, adapt_thresh: float, cosine_similarity_fun
             breaks.add(i)
     return breaks
 
-def assemble_segments(windows: list[dict], topic_breaks: set[int]) -> list[tuple]:
+def assemble_segments(windows_list: list[dict], topic_breaks_set: set[int]) -> list[tuple]:
     """Agrupa janelas em segmentos de tópicos."""
-    segments = []
-    current_seg_wins = []
-    for i, window in enumerate(windows):
-        if i in topic_breaks and current_seg_wins:
-            segments.append((current_seg_wins[0]['timestamp'], len(segments) + 1, current_seg_wins))
-            current_seg_wins = []
-        current_seg_wins.append(window)
-    if current_seg_wins:
-        segments.append((current_seg_wins[0]['timestamp'], len(segments) + 1, current_seg_wins))
-    return segments
+    segments_list: list[tuple] = []
+    current_seg_wins_list: list[dict] = []
+    for i_int, window_dict in enumerate(windows_list):
+        if i_int in topic_breaks_set and current_seg_wins_list:
+            segments_list.append((current_seg_wins_list[0]['timestamp'], len(segments_list) + 1, current_seg_wins_list))
+            current_seg_wins_list = []
+        current_seg_wins_list.append(window_dict)
+    if current_seg_wins_list:
+        segments_list.append((current_seg_wins_list[0]['timestamp'], len(segments_list) + 1, current_seg_wins_list))
+    return segments_list
 
 def generate_md_header(video_title: str, video_id: str, video_date: str, duration_str: str, lang_code: str, version: str) -> list[str]:
     """Gera o cabeçalho YAML e título do arquivo Markdown."""
@@ -747,10 +756,9 @@ def _extract_meta_to_dict(meta_dict: dict, video_dict: dict):
     """Mapeia campos do info.json para o dicionário do vídeo."""
     if not video_dict.get("title") or video_dict["title"] in ("N/A", "", "Avulso"):
         video_dict["title"] = meta_dict.get("title") or video_dict.get("title", "N/A")
-    if not video_dict.get("publish_date") or video_dict["publish_date"] in ("N/A", ""):
-        raw_date_str = meta_dict.get("upload_date", "")
-        if raw_date_str and len(raw_date_str) == 8:
-            video_dict["publish_date"] = f"{raw_date_str[:4]}-{raw_date_str[4:6]}-{raw_date_str[6:]}"
+    if not video_dict.get("publish_date") or video_dict["publish_date"] in ("N/A", "", "Desconhecida"):
+        raw_date_any = meta_dict.get("upload_date") or meta_dict.get("publish_date") or meta_dict.get("date")
+        video_dict["publish_date"] = format_date(raw_date_any)
     if not video_dict.get("duration_s"):
         video_dict["duration_s"] = meta_dict.get("duration")
     if not video_dict.get("channel"):
@@ -952,7 +960,7 @@ def _warm_up_cookies(session_config: SessionConfig, cookie_args_list: list[str])
     if cookies_txt_path.is_file():
         filter_youtube_cookies(cookies_txt_path)
         print_info("Cookies filtrados limitados ao YouTube (trackers removidos).")
-        return configure_cookies(session_config.cwd_path, session_config.script_dir_path, False, silent=True)
+        return configure_cookies(session_config.cwd_path, session_config.script_dir_path, False, silent_bool=True)
     
     print_err("Falha na extração de cookies do navegador.")
     return cookie_args_list
@@ -978,7 +986,7 @@ def _detect_and_report_language(session_config: SessionConfig, cookies_list: lis
     """Detecta o idioma e imprime feedback se definido pelo usuário."""
     _, _, cached_lang_str, _ = load_or_create_channel_state(
         session_config.cwd_path, session_config.yt_dlp_cmd_list, cookies_list, session_config.channel_url,
-        only_peek_lang_flag=True
+        only_peek_lang_bool=True
     )
     lang_str = user_lang_str or detect_language(
         session_config.yt_dlp_cmd_list, cookies_list, session_config.channel_url, cached_lang_str
@@ -1002,9 +1010,9 @@ def _sync_initial_state(
         # Persistência de metadados de canal/idioma detectados agora
         save_channel_state_json(
             json_path, state_list, 
-            detected_language=lang_cached if lang_cached else language_opt_string,
-            youtube_channel=session_config.channel_url,
-            channel_handle=session_config.discovered_uploader_id
+            detected_language_str=lang_cached if lang_cached else language_opt_string,
+            youtube_channel_url_str=session_config.channel_url,
+            channel_handle_str=session_config.discovered_uploader_id
         )
     return json_path, state_list, lang_cached, total
 
@@ -1051,7 +1059,7 @@ def _filter_by_handle(working_list: list[dict], channel_filter_str: str, is_firs
 
 def _filter_working_videos(
     full_state_list: list[dict], input_type_str: str, single_video_id_str: str | None,
-    channel_filter_str: str | None, is_first_bool: bool, cli_args: argparse.Namespace
+    channel_filter_str: str | None, is_first_channel_bool: bool, cli_args: argparse.Namespace
 ) -> list[dict]:
     """Aplica filtros de data, canal e modo single-video."""
     if input_type_str == "video" and single_video_id_str:
@@ -1060,7 +1068,7 @@ def _filter_working_videos(
     working_list = filter_state_list(full_state_list, cli_args.date)
     if not channel_filter_str: return working_list
 
-    return _filter_by_handle(working_list, channel_filter_str, is_first_bool)
+    return _filter_by_handle(working_list, channel_filter_str, is_first_channel_bool)
 
 
 def _check_disk_files(
@@ -1137,9 +1145,9 @@ def _handle_empty_working_list(channel_filter_str: str | None) -> None:
     sys.exit(1)
 
 
-def _print_process_start(working_list: list[dict], is_first_bool: bool) -> None:
-    """Imprime informações iniciais do processamento."""
-    if is_first_bool: print_section("Processamento")
+def _print_process_start(working_list: list[dict], is_first_channel_bool: bool) -> None:
+    """Imprime cabeçalho de início de processamento."""
+    if is_first_channel_bool: print_section("Processamento")
     info_int = sum(1 for v in working_list if v.get("info_downloaded"))
     no_sub_int = sum(1 for v in working_list if v.get("has_no_subtitle"))
     print_info(f"Histórico: {info_int} metadados no JSON · {no_sub_int} sem legenda")
@@ -1148,24 +1156,32 @@ def _print_process_start(working_list: list[dict], is_first_bool: bool) -> None:
 
 def process_videos(
     conf_obj: SessionConfig, cookies_list: list[str], lang_str: str, 
-    cli_args_ns: argparse.Namespace, channel_filter_str: str | None = None, is_first_bool: bool = True
+    cli_args_ns: argparse.Namespace, channel_filter_str: str | None = None, is_first_channel_bool: bool = True
 ) -> tuple:
     """Orquestra o download e processamento de vídeos."""
-    json_path, full_list, working_list, chan_tot_int = _prepare_working_state(
-        conf_obj, cookies_list, lang_str, cli_args_ns, channel_filter_str, is_first_bool
-    )
-    
-    if not working_list:
-        if is_first_bool: print_ok("Nenhum vídeo novo para processar.")
-        return 0, 0, 0, 0, chan_tot_int, False
+    try:
+        json_path, full_list, working_list, chan_tot_int = _prepare_working_state(
+            conf_obj, cookies_list, lang_str, cli_args_ns, channel_filter_str, is_first_channel_bool
+        )
+        
+        if not working_list:
+            if is_first_channel_bool: print_ok("Nenhum vídeo novo para processar.")
+            return 0, 0, 0, 0, chan_tot_int, False
 
-    _print_process_start(working_list, is_first_bool)
-    stats, interrupted, pending = _run_video_download_loop(
-        conf_obj, cookies_list, lang_str, cli_args_ns, json_path, full_list, working_list
-    )
-    
-    _run_deferred_md_conversion(pending, cli_args_ns)
-    return (*stats, chan_tot_int, interrupted)
+        _print_process_start(working_list, is_first_channel_bool)
+        stats, interrupted, pending = _run_video_download_loop(
+            conf_obj, cookies_list, lang_str, cli_args_ns, json_path, full_list, working_list
+        )
+        
+        if not interrupted:
+            interrupted = _run_deferred_md_conversion(pending, cli_args_ns)
+            
+        return (*stats, chan_tot_int, interrupted)
+    except KeyboardInterrupt:
+        print()
+        print_warn(f"Interrompido pelo usuário. {DIM}Limpando e finalizando...{RESET}")
+        cleanup_temp_files(conf_obj.cwd_path, conf_obj.channel_dir_name)
+        return 0, 0, 0, 0, 0, True
 
 
 def _run_video_download_loop(
@@ -1181,6 +1197,8 @@ def _run_video_download_loop(
             _check_auto_save(json_path, full_list, lang, conf, dirty)
     except KeyboardInterrupt:
         interrupted = True
+        print()
+        print_warn(f"Interrompido pelo usuário. Finalizando canal atual... {DIM}(Ctrl+C novamente para sair forçado){RESET}")
         cleanup_temp_files(conf.cwd_path, conf.channel_dir_name)
     
     _persist_state(json_path, full_list, lang, conf)
@@ -1274,9 +1292,9 @@ def _persist_state(json_path: Path, full_list: list[dict], language_opt_str: str
     """Salva o estado atual no arquivo JSON."""
     save_channel_state_json(
         json_path, full_list, 
-        detected_language=language_opt_str,
-        youtube_channel=session_config.channel_url,
-        channel_handle=session_config.discovered_uploader_id
+        detected_language_str=language_opt_str,
+        youtube_channel_url_str=session_config.channel_url,
+        channel_handle_str=session_config.discovered_uploader_id
     )
 
 
@@ -1288,7 +1306,7 @@ def _register_subtitle_success(
     if srt_path and cli_args_ns.md:
         pending_md_list.append((
             srt_path, video_dict["video_id"], 
-            video_dict.get("title", "Sem Título"), video_dict.get("publish_date", "N/A")
+            video_dict.get("title", "Sem Título"), video_dict.get("publish_date", "Desconhecida")
         ))
     
     video_dict["subtitle_downloaded"] = True
@@ -1304,8 +1322,8 @@ def _register_subtitle_success(
 def _handle_missing_subtitle(video_dict: dict, cli_args_ns: argparse.Namespace, prefix_str: str, dirty_list: list[int], flush_func: callable) -> int:
     """Trata ausência de legenda e decide se marca como definitiva."""
     print_warn("sem legenda — pulando", prefix_str)
-    pub_date_str = video_dict.get("publish_date", "N/A")
-    if pub_date_str != "N/A":
+    pub_date_str = video_dict.get("publish_date", "Desconhecida")
+    if pub_date_str not in ("N/A", "Desconhecida", ""):
         try:
             days_int = (datetime.now() - datetime.strptime(pub_date_str, "%Y-%m-%d")).days
             if days_int > 7:
@@ -1322,23 +1340,29 @@ def _handle_missing_subtitle(video_dict: dict, cli_args_ns: argparse.Namespace, 
     return 0
 
 
-def _run_deferred_md_conversion(pending_list: list[tuple], cli_args_ns: argparse.Namespace) -> None:
-    """Executa a conversão para MD dos arquivos agendados."""
+def _run_deferred_md_conversion(pending_list: list[tuple], cli_args_ns: argparse.Namespace) -> bool:
+    """Executa a conversão para MD dos arquivos agendados. Retorna True se interrompido."""
     if not pending_list:
-        return
+        return False
     total_int = len(pending_list)
     print()
     print_info(f"Fase 4: Clusterização de IA (TF-IDF) — {BOLD}{total_int} arquivo(s){RESET}")
-    for idx_int, (srt_path, vid_id_str, title_str, date_str) in enumerate(pending_list, start=1):
-        prefix_str = f"{BLUE}[{idx_int:>{len(str(total_int))}}/{total_int}]{RESET}"
-        if not srt_path.exists():
-            continue
-        print_dl(f"{prefix_str} {vid_id_str}{RESET}  {DIM}gerando .md{RESET}", "  ")
-        md_path = srt_to_md(srt_path, vid_id_str, title_str, video_date=date_str, threshold=0.3, indentation_prefix="    ")
-        if md_path:
-            print_ok(f"MD salvo: {DIM}{md_path.name}{RESET}", "    ")
-        if not cli_args_ns.keep_srt and srt_path.exists():
-            srt_path.unlink()
+    try:
+        for idx_int, (srt_path, vid_id_str, title_str, date_str) in enumerate(pending_list, start=1):
+            prefix_str = f"{BLUE}[{idx_int:>{len(str(total_int))}}/{total_int}]{RESET}"
+            if not srt_path.exists():
+                continue
+            print_dl(f"{prefix_str} {vid_id_str}{RESET}  {DIM}gerando .md{RESET}", "  ")
+            md_path = srt_to_md(srt_path, vid_id_str, title_str, video_date_str=format_date(date_str), threshold_float=0.3, indentation_prefix_str="    ")
+            if md_path:
+                print_ok(f"MD salvo: {DIM}{md_path.name}{RESET}", "    ")
+            if not cli_args_ns.keep_srt and srt_path.exists():
+                srt_path.unlink()
+    except KeyboardInterrupt:
+        print()
+        print_warn("Fase 4 interrompida. Alguns arquivos MD podem não ter sido gerados.")
+        return True
+    return False
 
 
 def _scan_srt_files(cwd_path: Path) -> list[tuple[Path, str]]:
@@ -1354,10 +1378,16 @@ def _scan_srt_files(cwd_path: Path) -> list[tuple[Path, str]]:
 
 
 def _load_video_lookup(cwd_path: Path) -> dict:
-    """Carrega o estado JSON e retorna um dicionário {video_id: title}."""
+    """Carrega o estado JSON e retorna um dicionário {video_id: {'title': title, 'date': date}}."""
     json_path = get_latest_json_path(cwd_path)
     state_map = _load_existing_state_map(json_path)
-    return {vid: v.get("title", "Sem Título") for vid, v in state_map.items()}
+    return {
+        vid: {
+            "title": v.get("title", "Sem Título"),
+            "date": format_date(v.get("publish_date") or v.get("upload_date") or v.get("date"))
+        } 
+        for vid, v in state_map.items()
+    }
 
 
 def regen_md_from_srt_files(force_bool: bool = False) -> None:
@@ -1408,7 +1438,9 @@ def _process_srt_item(srt_path: Path, idx_int: int, total_int: int, lookup_dict:
     """Processa um único arquivo SRT para regeneração de MD."""
     prefix_str = f"  {BLUE}[{idx_int:>{len(str(total_int))}}/{total_int}]{RESET}"
     vid_id_str = _extract_video_id_from_srt(srt_path)
-    title_str = lookup_dict.get(vid_id_str, srt_path.stem)
+    meta = lookup_dict.get(vid_id_str, {"title": srt_path.stem, "date": "Desconhecida"})
+    title_str = meta["title"]
+    date_str = meta["date"]
     md_path = srt_path.with_suffix(".md")
 
     if md_path.exists() and not force_bool:
@@ -1416,7 +1448,7 @@ def _process_srt_item(srt_path: Path, idx_int: int, total_int: int, lookup_dict:
         return 0
     
     print_dl(f"{srt_path.name}{RESET}  {DIM}{'re-segmentando' if md_path.exists() else 'gerando .md'}{RESET}", prefix_str)
-    res_path = srt_to_md(srt_path, vid_id_str, title_str, threshold=0.3, indentation_prefix="      ")
+    res_path = srt_to_md(srt_path, vid_id_str, title_str, video_date_str=date_str, threshold_float=0.3, indentation_prefix_str="      ")
     
     if res_path:
         print_ok(f"salvo: {DIM}{res_path.name}{RESET}", "      ")
@@ -1426,9 +1458,11 @@ def _process_srt_item(srt_path: Path, idx_int: int, total_int: int, lookup_dict:
 
 
 def _extract_video_id_from_srt(srt_path: Path) -> str:
-    """Extrai o ID do vídeo do nome do arquivo SRT."""
-    match_obj = re.search(r"([A-Za-z0-9_-]{11})", srt_path.stem)
-    return match_obj.group(1) if match_obj else srt_path.stem
+    """
+    Extrai o ID do vídeo (11 caracteres) do nome do arquivo SRT.
+    Utiliza a lógica robusta centralizada em utils.py.
+    """
+    return extract_video_id(srt_path.name)
 
 
 def _print_regen_summary(conv_int: int, skip_int: int, total_int: int) -> None:
@@ -1616,6 +1650,10 @@ def _handle_cli_pre_flows(cli_args: argparse.Namespace) -> bool:
     if cli_args.migrate:
         migrate_all_databases(Path.cwd())
         return True
+    if (cli_args.consolidate or cli_args.lexis_reset) and not cli_args.canal:
+        from lexis import consolidate_by_channel
+        consolidate_by_channel(str(Path.cwd()), reset_mode_bool=cli_args.lexis_reset)
+        return True
     return False
 
 
@@ -1656,14 +1694,19 @@ def _run_multi_channel_flow(channels_list: list[str], cli_args_ns: argparse.Name
     stats_list = [0, 0, 0, 0, 0] # dl, skip, err, tot, chan_tot
     interrupted_bool = False
     
-    for idx_int, channel_str in enumerate(channels_list, 1):
-        cli_args_ns.canal = channel_str
-        res_tuple = _process_channel_sync_item(channel_str, cli_args_ns, idx_int, is_multi_bool)
-        if res_tuple:
-            _accumulate_multi_stats(stats_list, res_tuple)
-            if res_tuple[5]:
-                interrupted_bool = True
-                break
+    try:
+        for idx_int, channel_str in enumerate(channels_list, 1):
+            cli_args_ns.canal = channel_str
+            res_tuple = _process_channel_sync_item(channel_str, cli_args_ns, idx_int, is_multi_bool)
+            if res_tuple:
+                _accumulate_multi_stats(stats_list, res_tuple)
+                if res_tuple[5]:
+                    interrupted_bool = True
+                    break
+    except KeyboardInterrupt:
+        interrupted_bool = True
+        print()
+        print_warn(f"Interrompido pelo usuário. {DIM}Encerrando sincronização...{RESET}")
 
     print_info(f"\nTodos os {BOLD}{len(channels_list)}{RESET} canal(is) verificados.")
     _finish_session_flow((*stats_list, interrupted_bool), cli_args_ns, cwd_path, multi=is_multi_bool)
@@ -1698,13 +1741,22 @@ def _process_channel_sync_item(channel_str: str, cli_args_ns: argparse.Namespace
         return None
 
 
-def print_summary(dl_int: int, sk_int: int, er_int: int, tot_int: int, chan_tot_int: int) -> None:
+def print_summary(
+    downloaded_videos_count: int,
+    skipped_videos_count: int,
+    error_videos_count: int,
+    total_videos_count: int,
+    channel_total_count: int = 0
+) -> None:
     """Exibe o resumo das estatísticas da sessão."""
-    print(f"  {ICON_OK}  Baixados    : {BGREEN}{dl_int}{RESET}")
-    print(f"  {ICON_SKIP}  Pulados     : {DIM}{sk_int}{RESET}")
-    if er_int > 0:
-        print(f"  {ICON_ERR}  Erros       : {BRED}{er_int}{RESET}")
-    print(f"  {ICON_DL}  Processados : {tot_int} de {chan_tot_int}")
+    # Se channel_total_count não for informado, usa o total_videos_count
+    chan_tot = channel_total_count if channel_total_count > 0 else total_videos_count
+    
+    print(f"  {ICON_OK}  Baixados    : {BGREEN}{downloaded_videos_count}{RESET}")
+    print(f"  {ICON_SKIP}  Pulados     : {DIM}{skipped_videos_count}{RESET}")
+    if error_videos_count > 0:
+        print(f"  {ICON_ERR}  Erros       : {BRED}{error_videos_count}{RESET}")
+    print(f"  {ICON_DL}  Processados : {total_videos_count} de {chan_tot}")
     print()
 
 
@@ -1721,8 +1773,8 @@ def _finish_session_flow(res_tuple: tuple, cli_args_ns: argparse.Namespace, cwd_
     dl_int, sk_int, er_int, tot_int, chan_tot_int, interrupted_bool = res_tuple
     print_section("Resumo Multi-Canal" if multi else "Resumo")
     print_summary(dl_int, sk_int, er_int, tot_int, chan_tot_int)
-    if cli_args_ns.consolidate or cli_args_ns.lexis_reset:
-        consolidate_by_channel(str(cwd_path), reset_mode=cli_args_ns.lexis_reset)
+    if (cli_args_ns.consolidate or cli_args_ns.lexis_reset) and not interrupted_bool:
+        consolidate_by_channel(str(cwd_path), reset_mode_bool=cli_args_ns.lexis_reset)
     if interrupted_bool:
         sys.exit(130)
 
