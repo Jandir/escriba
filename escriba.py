@@ -1333,10 +1333,13 @@ def _handle_download_failure(exit_code_int: int, cli_args_ns: argparse.Namespace
 
 def _persist_state(json_path: Path, full_list: list[dict], language_opt_str: str, session_config: SessionConfig) -> None:
     """Salva o estado atual no arquivo JSON."""
+    _, input_type, _ = parse_input_type(session_config.channel_input_url_or_handle)
+    url_to_save = session_config.channel_url if input_type != "video" else None
+
     save_channel_state_json(
         json_path, full_list, 
         detected_language_str=language_opt_str,
-        youtube_channel_url_str=session_config.channel_url,
+        youtube_channel_url_str=url_to_save,
         channel_handle_str=session_config.discovered_uploader_id
     )
 
@@ -1735,8 +1738,10 @@ def main() -> None:
     user_canal_str = cli_args_ns.canal
 
     if user_canal_str and json_path.exists():
-        if _handle_new_channel_flow(json_path, user_canal_str, cli_args_ns, cwd_path):
-            return
+        _, input_type, _ = parse_input_type(user_canal_str)
+        if input_type != "video":
+            if _handle_new_channel_flow(json_path, user_canal_str, cli_args_ns, cwd_path):
+                return
 
     _run_main_sync_flow(json_path, user_canal_str, cli_args_ns, cwd_path)
 

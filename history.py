@@ -289,10 +289,14 @@ def _populate_output_metadata(
     context_str: Optional[str] = handle_str or existing_dict.get("channel_context")
     if context_str: 
         output_data_dict["channel_context"] = context_str
-    if lang_str: 
-        output_data_dict["detected_language"] = lang_str
-    if url_str: 
-        output_data_dict["youtube_channel"] = url_str
+    
+    lang_val_str: Optional[str] = lang_str or existing_dict.get("detected_language")
+    if lang_val_str: 
+        output_data_dict["detected_language"] = lang_val_str
+        
+    final_url_str: Optional[str] = url_str or existing_dict.get("youtube_channel")
+    if final_url_str: 
+        output_data_dict["youtube_channel"] = final_url_str
 
 
 def _merge_duplicate_inline(existing_dict: Dict[str, Any], new_dict: Dict[str, Any]) -> None:
