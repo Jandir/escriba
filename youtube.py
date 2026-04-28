@@ -167,14 +167,14 @@ def detect_language(
             most_common_lang_str: str = most_common_tuple[0]
             clean_lang_str: str = most_common_lang_str.split("-")[0].split("_")[0]
             print_ok(f"Idioma detectado: {BOLD}{clean_lang_str}{RESET}")
-            return f"^{clean_lang_str}$"
+            return f"^{clean_lang_str}.*"
             
     except Exception as error_obj:
         print_warn(f"Erro na detecção de idioma: {error_obj}")
         
     fallback_lang_str: str = os.getenv("DEFAULT_LANGUAGE", "pt")
     print_warn(f"Idioma não detectado. Usando padrão: {BOLD}{fallback_lang_str}{RESET}")
-    return f"^{fallback_lang_str}$"
+    return f"^{fallback_lang_str}.*"
 
 
 def generate_fast_list_json(
@@ -277,6 +277,7 @@ def download_video(
         "--write-info-json",
         "--restrict-filenames",
         "--skip-download",
+        "--write-sub",
         "--write-auto-sub",
         "--convert-subs", "srt",
         "--sub-langs", lang_filter_str,

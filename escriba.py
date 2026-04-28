@@ -830,6 +830,7 @@ def _add_behavior_args(parser_obj: argparse.ArgumentParser) -> None:
     parser_obj.add_argument("-f", "--fast", action="store_true", help="Modo rápido: pula o tempo de espera entre downloads")
     parser_obj.add_argument("-rc", "--refresh-cookies", action="store_true", help="Força a extração de novos cookies do Chrome (apaga cookies.txt existente)")
     parser_obj.add_argument("--ignore-metadata", action="store_true", help="Pula a auto-recuperação de datas e títulos ausentes no histórico JSON")
+    parser_obj.add_argument("--retry-nosub", action="store_true", help="Tenta baixar novamente as legendas de vídeos marcados como 'sem legenda'")
 
 
 def _add_utility_args(parser_obj: argparse.ArgumentParser) -> None:
@@ -982,6 +983,26 @@ def init_auth_and_language(
     return cookies_list, lang_str
 
 
+def _ensure_global_cookies(session_config: SessionConfig, cli_args_ns: argparse.Namespace) -> list[str]:
+    """
+    Garante a existência e validade do arquivo cookies.txt antes do loop principal.
+    Retorna a lista de argumentos de cookies para serem reutilizados.
+    """
+    cookies_path = session_config.cwd_path / "cookies.txt"
+    
+    # Se o arquivo existe e não foi solicitado refresh, apenas carregamos silenciosamente
+    if cookies_path.is_file() and not cli_args_ns.refresh_cookies:
+        return configure_cookies(session_config.cwd_path, session_config.script_dir_path, False, silent_bool=True)
+
+    # Caso contrário, realiza a autenticação completa (que pode disparar extração do navegador)
+    print_section("Autenticação Global")
+    cookies_list, _ = init_auth_and_language(session_config, cli_args_ns.lang, cli_args_ns.refresh_cookies)
+    
+    # Após o setup inicial, desativamos o refresh para os itens subsequentes
+    cli_args_ns.refresh_cookies = False
+    return cookies_list
+
+
 def _detect_and_report_language(session_config: SessionConfig, cookies_list: list, user_lang_str: str) -> str:
     """Detecta o idioma e imprime feedback se definido pelo usuário."""
     _, _, cached_lang_str, _ = load_or_create_channel_state(
@@ -1044,8 +1065,8 @@ def _resolve_filter_handle(filter_str: str) -> str:
 
 def _filter_by_handle(working_list: list[dict], channel_filter_str: str, is_first: bool) -> list[dict]:
     """Filtra vídeos por handle de canal e inclui órfãos se for o primeiro canal."""
-    handle_str = _resolve_filter_handle(channel_filter_str)
-    filtered_list = [v for v in working_list if v.get("source_channel") == handle_str]
+    handle_str = _resolve_filter_handle(channel_filter_str).lower()
+    filtered_list = [v for v in working_list if str(v.get("source_channel", "")).lower() == handle_str]
     
     if is_first:
         orphans_list = [v for v in working_list if not v.get("source_channel")]
@@ -1073,7 +1094,8 @@ def _filter_working_videos(
 
 def _check_disk_files(
     video_id_str: str, session_config: SessionConfig, video_dict: dict,
-    cli_args: argparse.Namespace, pending_md_list: list, prefix_str: str
+    cli_args: argparse.Namespace, pending_md_list: list, prefix_str: str,
+    idx_int: int = 0, total_int: int = 0
 ) -> bool:
     """Verifica se arquivos SRT/MD já existem no disco."""
     base_name = f"{session_config.channel_dir_name}-{video_id_str}"
@@ -1083,21 +1105,30 @@ def _check_disk_files(
     if not srt_list and not md_list:
         return False
     
-    _handle_found_disk_files(video_id_str, video_dict, srt_list, md_list, cli_args, pending_md_list, prefix_str)
+    _handle_found_disk_files(video_id_str, video_dict, srt_list, md_list, cli_args, pending_md_list, prefix_str, idx_int, total_int)
     video_dict.update({"info_downloaded": True, "subtitle_downloaded": True})
     return True
 
 
-def _handle_found_disk_files(vid_id, v_dict, srt_list, md_list, args, pending, prefix):
+def _report_skip_progress(current_idx: int, total_count: int) -> None:
+    """Atualiza um contador dinâmico na mesma linha para itens pulados."""
+    # Usamos \r para voltar ao início da linha e ljust para limpar resquícios de mensagens longas
+    msg = f"\r  {ICON_WAIT}  {DIM}Verificando histórico: {BOLD}{current_idx}{RESET}{DIM}/{total_count} vídeos...{RESET}"
+    sys.stdout.write(msg.ljust(100))
+    sys.stdout.flush()
+
+
+def _handle_found_disk_files(vid_id, v_dict, srt_list, md_list, args, pending, prefix, idx_int=0, total_int=0):
     """Trata arquivos encontrados no disco, agendando MD se necessário."""
     if srt_list and not md_list and args.md:
+        if idx_int > 0: print() # Quebra a linha do contador dinâmico antes de imprimir o agendamento
         pending.append((
             Path(srt_list[0]), vid_id, 
             v_dict.get("title", "Sem Título"), v_dict.get("publish_date", "N/A")
         ))
         print_skip(f"{vid_id}  {DIM}.srt encontrado → agendado MD{RESET}", prefix)
     else:
-        print_skip(f"{vid_id}  {DIM}arquivos em disco{RESET}", prefix)
+        _report_skip_progress(idx_int, total_int)
 
 
 def _check_video_skip(
@@ -1105,18 +1136,20 @@ def _check_video_skip(
     session_config: SessionConfig,
     cli_args: argparse.Namespace,
     prefix_str: str,
-    pending_md_list: list
+    pending_md_list: list,
+    idx_int: int = 0,
+    total_int: int = 0
 ) -> bool:
     """Verifica se o vídeo deve ser pulado por registro no JSON ou arquivos em disco."""
     video_id_str = video_dict["video_id"]
     if video_dict.get("subtitle_downloaded"):
-        print_skip(f"{video_id_str}  {DIM}já registrado no JSON{RESET}", prefix_str)
+        _report_skip_progress(idx_int, total_int)
         return True
-    if video_dict.get("has_no_subtitle"):
-        print_skip(f"{video_id_str}  {DIM}marcado como sem legenda{RESET}", prefix_str)
+    if video_dict.get("has_no_subtitle") and not getattr(cli_args, "retry_nosub", False):
+        _report_skip_progress(idx_int, total_int)
         return True
 
-    return _check_disk_files(video_id_str, session_config, video_dict, cli_args, pending_md_list, prefix_str)
+    return _check_disk_files(video_id_str, session_config, video_dict, cli_args, pending_md_list, prefix_str, idx_int, total_int)
 
 
 def _prepare_working_state(
@@ -1203,6 +1236,11 @@ def _run_video_download_loop(
         cleanup_temp_files(conf.cwd_path, conf.channel_dir_name)
     
     _persist_state(json_path, full_list, lang, conf)
+    
+    # Se terminamos o loop com um contador dinâmico na tela, limpamos
+    sys.stdout.write("\r" + " " * 100 + "\r")
+    sys.stdout.flush()
+    
     return (*stats_list, len(working_list)), interrupted, pending_md
 
 
@@ -1228,10 +1266,14 @@ def _process_loop_item(
 ) -> tuple[int, bool]:
     """Processa um item individual do loop de download."""
     prefix_str = f"  {BLUE}[{idx:>{len(str(total))}}/{total}]{RESET}"
-    if _check_video_skip(video_dict, session_config, cli_args, prefix_str, pending_md_list):
+    if _check_video_skip(video_dict, session_config, cli_args, prefix_str, pending_md_list, idx_int=idx, total_int=total):
         if video_dict.get("subtitle_downloaded"): dirty_int[0] += 1
         return 0, True
     
+    # Se chegamos aqui, o vídeo NÃO será pulado. 
+    # Precisamos garantir que a linha do contador dinâmico seja encerrada.
+    print() 
+
     res = _download_and_process_single(
         video_dict, session_config, cookie_args_list, language_opt_str, 
         cli_args, prefix_str, pending_md_list, dirty_int
@@ -1345,24 +1387,68 @@ def _run_deferred_md_conversion(pending_list: list[tuple], cli_args_ns: argparse
     """Executa a conversão para MD dos arquivos agendados. Retorna True se interrompido."""
     if not pending_list:
         return False
+    
     total_int = len(pending_list)
     print()
-    print_info(f"Fase 4: Clusterização de IA (TF-IDF) — {BOLD}{total_int} arquivo(s){RESET}")
+    
+    # Ativamos o pool de threads apenas para mais de 10 arquivos para evitar overhead em lotes pequenos.
+    use_parallel_bool = total_int > 10
+    max_workers = min(os.cpu_count() or 4, 8) if use_parallel_bool else 1
+    
+    mode_suffix_str = f" ({max_workers} threads)" if use_parallel_bool else ""
+    print_info(f"Fase 4: Clusterização de IA (TF-IDF) — {BOLD}{total_int} arquivo(s){RESET}{mode_suffix_str}")
+
+    def _convert_task(item: tuple) -> tuple[str, Path | None]:
+        """Tarefa individual de conversão para o pool ou loop."""
+        srt_path, vid_id_str, title_str, date_str = item
+        if not srt_path.exists():
+            return vid_id_str, None
+        
+        md_path = srt_to_md(
+            srt_path, vid_id_str, title_str, 
+            video_date_str=format_date(date_str), 
+            threshold_float=0.3, indentation_prefix_str="    "
+        )
+        
+        if not cli_args_ns.keep_srt and srt_path.exists():
+            try: srt_path.unlink()
+            except Exception: pass
+            
+        return vid_id_str, md_path
+
     try:
-        for idx_int, (srt_path, vid_id_str, title_str, date_str) in enumerate(pending_list, start=1):
-            prefix_str = f"{BLUE}[{idx_int:>{len(str(total_int))}}/{total_int}]{RESET}"
-            if not srt_path.exists():
-                continue
-            print_dl(f"{prefix_str} {vid_id_str}{RESET}  {DIM}gerando .md{RESET}", "  ")
-            md_path = srt_to_md(srt_path, vid_id_str, title_str, video_date_str=format_date(date_str), threshold_float=0.3, indentation_prefix_str="    ")
-            if md_path:
-                print_ok(f"MD salvo: {DIM}{md_path.name}{RESET}", "    ")
-            if not cli_args_ns.keep_srt and srt_path.exists():
-                srt_path.unlink()
+        if use_parallel_bool:
+            finished_count_int = 0
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures_dict = {executor.submit(_convert_task, item): item[1] for item in pending_list}
+                for future_obj in as_completed(futures_dict):
+                    finished_count_int += 1
+                    vid_id, md_res_path = future_obj.result()
+                    prefix_str = f"  {BLUE}[{finished_count_int:>{len(str(total_int))}}/{total_int}]{RESET}"
+                    
+                    if md_res_path:
+                        print_ok(f"{vid_id} → {DIM}{md_res_path.name}{RESET}", prefix_str)
+                    else:
+                        print_warn(f"{vid_id} → falha na conversão", prefix_str)
+        else:
+            # Mantém o comportamento sequencial clássico para poucos arquivos
+            for idx_int, item in enumerate(pending_list, start=1):
+                srt_path, vid_id_str, _, _ = item
+                prefix_str = f"{BLUE}[{idx_int:>{len(str(total_int))}}/{total_int}]{RESET}"
+                if not srt_path.exists(): continue
+                
+                print_dl(f"{prefix_str} {vid_id_str}{RESET}  {DIM}gerando .md{RESET}", "  ")
+                _, md_res_path = _convert_task(item)
+                if md_res_path:
+                    print_ok(f"MD salvo: {DIM}{md_res_path.name}{RESET}", "    ")
+
     except KeyboardInterrupt:
         print()
         print_warn(f"Geração de MDs interrompida. {DIM}Pulando para a consolidação...{RESET}")
         return True
+    except Exception as e_obj:
+        print_err(f"Erro na fase de conversão: {e_obj}")
+
     return False
 
 
@@ -1412,17 +1498,48 @@ def regen_md_from_srt_files(force_bool: bool = False) -> None:
 def _run_regen_loop(srt_list: list, lookup_dict: dict, force_bool: bool) -> tuple[int, int]:
     """Executa o loop de regeneração de arquivos MD."""
     conv_int, skip_int = 0, 0
-    curr_label_str = ""
-    for idx_int, (srt_path, label_str) in enumerate(srt_list, start=1):
-        if label_str != curr_label_str:
-            curr_label_str = label_str
-            _print_srt_group_header(label_str, srt_list)
+    total_int = len(srt_list)
+    
+    # Ativamos o pool de threads apenas para mais de 10 arquivos para evitar overhead em lotes pequenos.
+    use_parallel_bool = total_int > 10
+    max_workers = min(os.cpu_count() or 4, 8) if use_parallel_bool else 1
+    
+    if use_parallel_bool:
+        print_info(f"Iniciando regeneração paralela ({max_workers} threads)...")
         
-        res_int = _process_srt_item(srt_path, idx_int, len(srt_list), lookup_dict, force_bool)
-        if res_int == 1:
-            conv_int += 1
-        elif res_int == 0:
-            skip_int += 1
+        def _regen_task(indexed_item: tuple) -> tuple[int, str]:
+            idx, (srt_path, _) = indexed_item
+            # O _process_srt_item já faz seus próprios prints internos
+            res = _process_srt_item(srt_path, idx, total_int, lookup_dict, force_bool)
+            return res, srt_path.name
+
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Mantemos o índice original para o prefixo correto [1/N]
+                futures_list = [executor.submit(_regen_task, item) for item in enumerate(srt_list, start=1)]
+                for future_obj in as_completed(futures_list):
+                    res_int, _ = future_obj.result()
+                    if res_int == 1:
+                        conv_int += 1
+                    elif res_int == 0:
+                        skip_int += 1
+        except KeyboardInterrupt:
+            print()
+            print_warn(f"Regeneração interrompida. {DIM}Saindo...{RESET}")
+    else:
+        # Mantém o comportamento sequencial clássico com agrupamento visual por pastas
+        curr_label_str = ""
+        for idx_int, (srt_path, label_str) in enumerate(srt_list, start=1):
+            if label_str != curr_label_str:
+                curr_label_str = label_str
+                _print_srt_group_header(label_str, srt_list)
+            
+            res_int = _process_srt_item(srt_path, idx_int, total_int, lookup_dict, force_bool)
+            if res_int == 1:
+                conv_int += 1
+            elif res_int == 0:
+                skip_int += 1
+                
     return conv_int, skip_int
 
 
@@ -1448,9 +1565,10 @@ def _process_srt_item(srt_path: Path, idx_int: int, total_int: int, lookup_dict:
     md_path = srt_path.with_suffix(".md")
 
     if md_path.exists() and not force_bool:
-        print_skip(f"{srt_path.name}  {DIM}.md já existe{RESET}", prefix_str)
+        _report_skip_progress(idx_int, total_int)
         return 0
     
+    print() # Quebra a linha do contador antes de iniciar a regeneração real
     print_dl(f"{srt_path.name}{RESET}  {DIM}{'re-segmentando' if md_path.exists() else 'gerando .md'}{RESET}", prefix_str)
     res_path = srt_to_md(srt_path, vid_id_str, title_str, video_date_str=date_str, threshold_float=0.3, indentation_prefix_str="      ")
     
@@ -1695,13 +1813,26 @@ def _run_multi_channel_flow(channels_list: list[str], cli_args_ns: argparse.Name
     is_multi_bool = len(channels_list) > 1
     _print_sync_header(channels_list, is_multi_bool)
 
+    global_cookies_list = []
+    if channels_list:
+        # Setup inicial de cookies para evitar múltiplas extrações do navegador.
+        # Usamos o primeiro canal da lista como "mestre" para o warm-up de cookies.
+        orig_canal = cli_args_ns.canal
+        cli_args_ns.canal = channels_list[0]
+        conf_obj = setup_session(cli_args_ns)
+        global_cookies_list = _ensure_global_cookies(conf_obj, cli_args_ns)
+        cli_args_ns.canal = orig_canal
+
     stats_list = [0, 0, 0, 0, 0] # dl, skip, err, tot, chan_tot
     interrupted_bool = False
     
     try:
         for idx_int, channel_str in enumerate(channels_list, 1):
             cli_args_ns.canal = channel_str
-            res_tuple = _process_channel_sync_item(channel_str, cli_args_ns, idx_int, is_multi_bool)
+            res_tuple = _process_channel_sync_item(
+                channel_str, cli_args_ns, idx_int, is_multi_bool, 
+                global_cookies_list=global_cookies_list
+            )
             if res_tuple:
                 _accumulate_multi_stats(stats_list, res_tuple)
                 if res_tuple[5]:
@@ -1730,11 +1861,26 @@ def _print_sync_header(channels_list: list[str], is_multi_bool: bool) -> None:
     print()
 
 
-def _process_channel_sync_item(channel_str: str, cli_args_ns: argparse.Namespace, idx_int: int, is_multi_bool: bool) -> tuple | None:
+def _process_channel_sync_item(
+    channel_str: str, 
+    cli_args_ns: argparse.Namespace, 
+    idx_int: int, 
+    is_multi_bool: bool,
+    global_cookies_list: list[str] = None
+) -> tuple | None:
     """Processa um único canal no fluxo multi-canal."""
     try:
         conf_obj = setup_session(cli_args_ns)
-        cookies_list, lang_str = init_auth_and_language(conf_obj, cli_args_ns.lang, cli_args_ns.refresh_cookies)
+        
+        # Se já temos os cookies globais, não repetimos a autenticação
+        if global_cookies_list:
+            cookies_list = global_cookies_list
+            print_section("Idioma")
+            # Detectamos apenas o idioma, pois os cookies já estão prontos
+            lang_str = _detect_and_report_language(conf_obj, cookies_list, cli_args_ns.lang)
+        else:
+            cookies_list, lang_str = init_auth_and_language(conf_obj, cli_args_ns.lang, cli_args_ns.refresh_cookies)
+
         return process_videos(
             conf_obj, cookies_list, lang_str, cli_args_ns,
             channel_filter_str=channel_str if is_multi_bool else None,
