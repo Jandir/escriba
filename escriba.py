@@ -93,6 +93,7 @@ class SessionConfig:
     channel_input_url_or_handle: str
     channel_url: str
     discovered_uploader_id: Optional[str] = None
+    disk_files_cache: dict[str, list[str]] = None  # Cache indexado por video_id: { "vid_id": ["file1.srt", "file1.md"] }
 
 
 @dataclass
@@ -318,7 +319,11 @@ def load_or_create_channel_state(
     if only_peek_lang_bool: return json_path, [], lang_cached_str, 0
 
     state_dict = _load_existing_state_map(json_path)
-    yt_list = generate_fast_list_json(cmd_list, cookies_list, url_str, history_dict=hist_dict)
+    
+    # SMART SYNC: Se não for um full scan, passamos os IDs conhecidos para parar cedo
+    stop_ids = set(state_dict.keys()) if not getattr(sys, "_escriba_full_scan", False) else None
+    
+    yt_list = generate_fast_list_json(cmd_list, cookies_list, url_str, history_dict=hist_dict, stop_at_ids=stop_ids)
     if not yt_list and not state_dict: return None, [], lang_cached_str, 0
 
     tag_str = f"@{name_str}" if name_str and name_str != "canal" else None
@@ -829,6 +834,7 @@ def _add_behavior_args(parser_obj: argparse.ArgumentParser) -> None:
     parser_obj.add_argument("-d", "--date", default="", metavar="DATA", help="Data limite (posterior a). Formato: YYYYMMDD (ex: 20260101)")
     parser_obj.add_argument("-f", "--fast", action="store_true", help="Modo rápido: pula o tempo de espera entre downloads")
     parser_obj.add_argument("-rc", "--refresh-cookies", action="store_true", help="Força a extração de novos cookies do Chrome (apaga cookies.txt existente)")
+    parser_obj.add_argument("--full-scan", action="store_true", help="Desativa o Smart Sync e força a listagem completa de todos os vídeos do canal")
     parser_obj.add_argument("--ignore-metadata", action="store_true", help="Pula a auto-recuperação de datas e títulos ausentes no histórico JSON")
     parser_obj.add_argument("--retry-nosub", action="store_true", help="Tenta baixar novamente as legendas de vídeos marcados como 'sem legenda'")
 
@@ -1098,9 +1104,16 @@ def _check_disk_files(
     idx_int: int = 0, total_int: int = 0
 ) -> bool:
     """Verifica se arquivos SRT/MD já existem no disco."""
-    base_name = f"{session_config.channel_dir_name}-{video_id_str}"
-    srt_list = glob.glob(str(session_config.cwd_path / f"{base_name}*.srt"))
-    md_list = glob.glob(str(session_config.cwd_path / f"{base_name}*.md"))
+    # OTIMIZAÇÃO: Usa busca em dicionário O(1) em vez de iterar sobre todos os arquivos (O(N^2) corrigido)
+    if session_config.disk_files_cache is not None:
+        files_for_this_video = session_config.disk_files_cache.get(video_id_str, [])
+        srt_list = [str(session_config.cwd_path / f) for f in files_for_this_video if f.endswith(".srt")]
+        md_list = [str(session_config.cwd_path / f) for f in files_for_this_video if f.endswith(".md")]
+    else:
+        # Fallback para o método clássico lento
+        base_name = f"{session_config.channel_dir_name}-{video_id_str}"
+        srt_list = glob.glob(str(session_config.cwd_path / f"{base_name}*.srt"))
+        md_list = glob.glob(str(session_config.cwd_path / f"{base_name}*.md"))
 
     if not srt_list and not md_list:
         return False
@@ -1112,7 +1125,10 @@ def _check_disk_files(
 
 def _report_skip_progress(current_idx: int, total_count: int) -> None:
     """Atualiza um contador dinâmico na mesma linha para itens pulados."""
-    # Usamos \r para voltar ao início da linha e ljust para limpar resquícios de mensagens longas
+    # OTIMIZAÇÃO: Atualiza o console apenas a cada 20 itens para evitar lag de I/O em loops rápidos
+    if current_idx % 20 != 0 and current_idx != total_count:
+        return
+        
     msg = f"\r  {ICON_WAIT}  {DIM}Verificando histórico: {BOLD}{current_idx}{RESET}{DIM}/{total_count} vídeos...{RESET}"
     sys.stdout.write(msg.ljust(100))
     sys.stdout.flush()
@@ -1193,6 +1209,22 @@ def process_videos(
 ) -> tuple:
     """Orquestra o download e processamento de vídeos."""
     try:
+        # Prepara o cache de arquivos em disco O(1)
+        if conf_obj.disk_files_cache is None:
+            from collections import defaultdict
+            cache = defaultdict(list)
+            prefix = f"{conf_obj.channel_dir_name}-"
+            for f in conf_obj.cwd_path.iterdir():
+                if f.is_file() and f.name.startswith(prefix):
+                    # Extrai o video_id (11 chars logo após o prefixo)
+                    vid_id = f.name[len(prefix):len(prefix)+11]
+                    if len(vid_id) == 11:
+                        cache[vid_id].append(f.name)
+            conf_obj.disk_files_cache = dict(cache)
+
+        # Configura variável global temporária para o Smart Sync no carregamento
+        sys._escriba_full_scan = cli_args_ns.full_scan
+
         json_path, full_list, working_list, chan_tot_int = _prepare_working_state(
             conf_obj, cookies_list, lang_str, cli_args_ns, channel_filter_str, is_first_channel_bool
         )

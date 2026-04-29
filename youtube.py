@@ -181,13 +181,19 @@ def generate_fast_list_json(
     yt_dlp_cmd_list: List[str], 
     cookie_args_list: List[str], 
     channel_url_str: str, 
-    history_dict: Optional[Dict[str, Any]] = None
+    history_dict: Optional[Dict[str, Any]] = None,
+    stop_at_ids: Optional[set] = None
 ) -> List[Dict[str, Any]]:
     """
     FASE DE DESCOBERTA (Discovery)
     -----------------------------
     Varre o canal e cria uma lista de todos os vídeos disponíveis.
     Usa a flag '--flat-playlist' para não baixar detalhes pesados, apenas ID e Título.
+    
+    OTIMIZAÇÃO SMART SYNC:
+    Se 'stop_at_ids' for fornecido, o script interrompe a busca assim que encontra
+    um vídeo que já existe no banco de dados local. Isso economiza muito tempo
+    em canais grandes (ex: 8.000 vídeos).
     """
     print_info(f"Fase 1: Mapeando vídeos do canal...")
     
@@ -198,11 +204,6 @@ def generate_fast_list_json(
     
     try:
         # Popen permite que leiamos a saída do comando enquanto ele ainda está rodando (streaming)
-        # Explicação para Juniores: 
-        # Diferente do 'subprocess.run' (que espera o comando acabar), o 'Popen' abre um 
-        # "cano" (pipe) de comunicação. Conforme o yt-dlp descobre um vídeo, ele "gospe" 
-        # a informação no cano e nós pegamos na mesma hora. Assim o usuário vê o contador 
-        # subindo em tempo real.
         process_obj = subprocess.Popen(
             cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
         )
@@ -215,6 +216,11 @@ def generate_fast_list_json(
                     if not video_id_str: 
                         continue
                     
+                    # SMART SYNC: Se já temos esse vídeo, paramos de listar o canal (ordem cronológica reversa)
+                    if stop_at_ids and video_id_str in stop_at_ids:
+                        process_obj.terminate()
+                        break
+
                     # Extrai e formata a data usando a utilidade centralizada
                     raw_date_any = video_data_dict.get("upload_date") or video_data_dict.get("publish_date") or video_data_dict.get("date")
                     if not raw_date_any and history_dict:
@@ -241,11 +247,11 @@ def generate_fast_list_json(
         process_obj.wait()
         print()  # Quebra de linha após o contador
         
-        if process_obj.returncode != 0 and not videos_found_list:
+        if process_obj.returncode != 0 and not videos_found_list and not (stop_at_ids and process_obj.returncode == -15):
             _refresh_cookies_on_error(Path.cwd(), Path(__file__).parent.resolve())
             
         return videos_found_list
-        
+    
     except Exception as error_obj:
         print_err(f"Falha crítica na descoberta: {error_obj}")
         return []
