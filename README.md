@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Versão-2.6.1-blue?style=for-the-badge" alt="Versão">
+  <img src="https://img.shields.io/badge/Versão-2.6.4-blue?style=for-the-badge" alt="Versão">
   <img src="https://img.shields.io/badge/Python-3.13+-ffd343?style=for-the-badge&logo=python&logoColor=black" alt="Python">
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/Licença-MIT-green?style=for-the-badge" alt="Licença">
@@ -11,7 +11,7 @@
 </p>
 
 # Escriba: Video-to-Knowledge ETL Pipeline
-### O Orquestrador de Inteligência para YouTube
+### O Orquestrador de Inteligência para YouTube e Vimeo
 
 **Escriba** é um pipeline de extração, higienização via LLM e estruturação de dados não estruturados de vídeo para bases de conhecimento (RAG/NotebookLM).
 
@@ -37,7 +37,7 @@ O output final é uma base de conhecimento limpa e otimizada, pronta para:
 
 ## ⚡ Funcionalidades de Elite
 
-*   **⚡️ Mapeamento JSON Híbrido**: Leitura ultrarrápida de conteúdo via YouTube-DLP com fallback inteligente e unificação de metadados por pasta.
+*   **⚡️ Mapeamento JSON Híbrido**: Leitura ultrarrápida de conteúdo via YouTube-DLP (YouTube/Vimeo) com fallback inteligente e unificação de metadados por pasta.
 *   **🛠️ Auto-Healing de Autenticação**: Detecta cookies inválidos, regenera o cache e continua o download sem interrupções.
 *   **🧠 Motor de NLP Avançado**: Pipeline de 6 fases para limpeza de ruído, deduplicação de "muletas" orais e ancoragem temporal.
 *   **📁 Repositório Único Inteligente**: Banco de dados JSON amarrado ao nome da pasta (`escriba_[folder_name].json`), com migração e consolidação automática de bases legadas.
@@ -52,7 +52,7 @@ O fluxo de processamento do Escriba transforma conteúdo audiovisual bruto em do
 
 ```mermaid
 graph LR
-    A[YouTube / Video] --> B{Processamento}
+    A[YouTube / Vimeo / Video] --> B{Processamento}
     subgraph B [Escriba Pipeline]
         B1[Extração de Metadados]
         B2[Higienização via LLM/NLP]
@@ -64,7 +64,8 @@ graph LR
 
 ### 🧱 Modularidade (Developer-Friendly)
 O núcleo foi refatorado para seguir padrões rigorosos de qualidade Python (PEP 8):
-*   `youtube.py`: Abstração de rede e orquestração do `yt-dlp`.
+*   `youtube.py`: Abstração de rede e orquestração do `yt-dlp` para YouTube.
+*   `vimeo.py`: Módulo especializado para extração e mapeamento de canais Vimeo.
 *   `history.py`: Gestão de estado atômico e persistência JSON.
 *   `rules.py`: Motor de limpeza léxica e processamento de regras.
 *   `utils.py`: Sistema de design CLI e utilitários auxiliares.
@@ -132,11 +133,14 @@ Ceu, Céu
 
 ## 🛠️ Como Operar
 
-O Escriba aceita Handles (`@Canal`), URLs completas ou IDs de vídeos únicos.
+O Escriba aceita Handles (`@Canal`), URLs completas (YouTube/Vimeo) ou IDs de vídeos únicos.
 
 ```bash
 # Sincronização Incremental (Padrão: mapeia canal, extrai subs e gera MD)
 escriba @FilipeDeschamps
+
+# Suporte a Vimeo (Canais e Vídeos)
+escriba https://vimeo.com/user136027363
 
 # Modo Áudio: Baixa MP3 de um vídeo específico
 escriba -a https://youtu.be/dQw4w9WgXcQ

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 =============================================================================
-ESCRIBA: Orquestrador de Download de Legendas do YouTube
+ESCRIBA: Orquestrador de Download de Legendas do YouTube/Vimeo
 =============================================================================
 
 SUMÁRIO DO SCRIPT:
-Baixa legendas de todos os vídeos de um canal do YouTube.
+Baixa legendas de todos os vídeos de um canal do YouTube ou Vimeo.
 O objetivo original é utilizar estas legendas como fontes no NotebookLM,
 para alavancar estudos sobre determinado autor ou assunto.
 
@@ -68,7 +68,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils import print_ok, print_err, print_warn, print_info, print_skip, print_dl, print_section, print_header, print_countdown, extract_video_id, format_date, BOLD, RESET, DIM, GREEN, RED, YELLOW, BLUE, WHITE, BCYAN, BWHITE, BRED, BGREEN, BYELLW, ICON_OK, ICON_ERR, ICON_WARN, ICON_SKIP, ICON_DL, ICON_WAIT, ICON_INFO
 from rules import clean_ekklezia_terms
 from history import get_latest_json_path, load_all_local_history, save_channel_state_json, auto_migrate_legacy_files, migrate_all_databases, filter_state_list, register_channel_in_json
-from youtube import setup_environment, configure_cookies, filter_youtube_cookies, detect_language, generate_fast_list_json, download_video
+import youtube
+from youtube import configure_cookies, filter_youtube_cookies
+import vimeo
+from vimeo import filter_vimeo_cookies
 from datetime import datetime
 from dataclasses import dataclass
 from lexis import consolidar_por_canal
@@ -79,7 +82,7 @@ import requests
 
 from collections import Counter
 
-VERSION = "2.6.1"
+VERSION = "2.6.4"
 
 _script_dir = Path(__file__).parent.resolve()
 
@@ -93,6 +96,7 @@ class SessionConfig:
     channel_input_url_or_handle: str
     channel_url: str
     discovered_uploader_id: Optional[str] = None
+    provider: str = "youtube" # 'youtube' ou 'vimeo'
     disk_files_cache: dict[str, list[str]] = None  # Cache indexado por video_id: { "vid_id": ["file1.srt", "file1.md"] }
 
 
@@ -111,22 +115,32 @@ load_dotenv(Path(__file__).parent / ".env")
 # Prioridade: variável NODE_PATH do .env (se você definir) → node encontrado no PATH do sistema
 NODE_PATH = os.getenv("NODE_PATH") or shutil.which("node") or ""
 
-def _extract_video_meta_cli(vid_id_str: str, cmd_list: list[str], cookie_args_list: list[str]) -> tuple[str | None, str | None]:
+def _extract_video_meta_cli(url_str: str, cmd_list: list[str], cookie_args_list: list[str]) -> tuple[str | None, str | None]:
     """Executa comando yt-dlp para extrair metadados de vídeo único."""
-    meta_cmd_list: list[str] = cmd_list + cookie_args_list + ["--dump-json", "--skip-download", f"https://www.youtube.com/watch?v={vid_id_str}"]
+    meta_cmd_list: list[str] = cmd_list + cookie_args_list + ["--dump-json", "--skip-download", url_str]
     try:
         proc_res_obj = subprocess.run(meta_cmd_list, capture_output=True, text=True, timeout=15)
         if proc_res_obj.stdout:
             meta_dict: dict = json.loads(proc_res_obj.stdout)
-            return meta_dict.get("uploader_id"), meta_dict.get("channel_id")
+            # Para o Vimeo, o uploader_id pode estar em outros campos, mas o yt-dlp costuma normalizar
+            return meta_dict.get("uploader_id") or meta_dict.get("uploader"), meta_dict.get("channel_id")
     except Exception: pass
     return None, None
 
 
 def _identify_video_source(url_str: str, history_dict: dict, cmd_list: list[str], cookie_args_list: list[str]) -> tuple[str | None, str, str | None, str | None]:
     """Extrai metadados quando a origem é um vídeo individual."""
-    match = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", url_str)
-    vid_id_str = match.group(1) if match else "video"
+    # YouTube match
+    yt_match = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", url_str)
+    # Vimeo match
+    vimeo_match = re.search(r"vimeo\.com/(\d+)", url_str)
+    
+    if yt_match:
+        vid_id_str = yt_match.group(1)
+    elif vimeo_match:
+        vid_id_str = vimeo_match.group(1)
+    else:
+        vid_id_str = "video"
     
     if vid_id_str in history_dict:
         ent_dict = history_dict[vid_id_str]
@@ -136,7 +150,7 @@ def _identify_video_source(url_str: str, history_dict: dict, cmd_list: list[str]
             return up_id_str.lstrip("@"), vid_id_str, ent_dict.get("channel_id"), up_id_str
 
     print_info(f"Identificando canal de origem para o vídeo {BOLD}{vid_id_str}{RESET}...")
-    up_id_str, chan_id_str = _extract_video_meta_cli(vid_id_str, cmd_list, cookie_args_list)
+    up_id_str, chan_id_str = _extract_video_meta_cli(url_str, cmd_list, cookie_args_list)
     if up_id_str:
         print_ok(f"Origem identificada: {BOLD}@{up_id_str.lstrip('@')}{RESET}")
         return up_id_str.lstrip("@"), vid_id_str, chan_id_str, up_id_str
@@ -151,40 +165,62 @@ def _extract_playlist_meta_cli(url_str: str, cmd_list: list[str], cookie_args_li
         proc_res = subprocess.run(meta_cmd_list, capture_output=True, text=True, timeout=15)
         if proc_res.stdout:
             meta_dict = json.loads(proc_res.stdout.splitlines()[0])
-            return meta_dict.get("uploader_id"), meta_dict.get("channel_id"), meta_dict.get("uploader")
+            return meta_dict.get("uploader_id") or meta_dict.get("uploader"), meta_dict.get("channel_id"), meta_dict.get("uploader")
     except Exception: pass
     return None, None, None
 
 
 def _identify_playlist_source(url_str: str, history_dict: dict, cmd_list: list[str], cookie_args_list: list[str]) -> tuple[str | None, str, str | None, str | None]:
     """Extrai metadados quando a origem é uma playlist."""
-    match_obj = re.search(r"list=([A-Za-z0-9_-]+)", url_str)
-    list_id_str: str = match_obj.group(1) if match_obj else "playlist"
+    # YouTube
+    yt_match = re.search(r"list=([A-Za-z0-9_-]+)", url_str)
+    # Vimeo
+    vimeo_match = re.search(r"showcase/(\d+)", url_str)
+    
+    if yt_match:
+        list_id_str = yt_match.group(1)
+    elif vimeo_match:
+        list_id_str = vimeo_match.group(1)
+    else:
+        list_id_str = "playlist"
     
     for _, ent_dict in history_dict.items():
         if "playlists" in ent_dict and list_id_str in ent_dict["playlists"]:
             up_id_str: str = ent_dict.get("uploader_id", "")
             if up_id_str:
-                print_ok(f"Dono da playlist identificado (cache local): {BOLD}@{up_id_str.lstrip('@')}{RESET}")
-                return up_id_str.lstrip("@"), list_id_str, ent_dict.get("channel_id"), up_id_str
+                print_ok(f"Origem identificada (cache local): {BOLD}@{up_id_str.lstrip('@')}{RESET}")
+                return up_id_str.lstrip("@"), f"list={list_id_str}", ent_dict.get("channel_id"), up_id_str
+
+    print_info(f"Identificando canal de origem para a lista {BOLD}{list_id_str}{RESET}...")
+    up_id_str, chan_id_str, up_name_str = _extract_playlist_meta_cli(url_str, cmd_list, cookie_args_list)
+    if up_id_str:
+        print_ok(f"Origem identificada: {BOLD}@{up_id_str.lstrip('@')}{RESET}")
+        return up_id_str.lstrip("@"), f"list={list_id_str}", chan_id_str, up_id_str
     
-    print_info(f"Identificando canal dono da playlist {BOLD}{list_id_str}{RESET}...")
-    up_id_str, chan_id_str, uploader_name_str = _extract_playlist_meta_cli(url_str, cmd_list, cookie_args_list)
-    if up_id_str: return up_id_str.lstrip("@"), list_id_str, chan_id_str, up_id_str
-    if uploader_name_str: return uploader_name_str.replace(" ","_"), list_id_str, chan_id_str, None
-    
-    return f"playlist_{list_id_str}", list_id_str, None, None
+    return f"playlist_{list_id_str}", f"list={list_id_str}", None, None
 
 
 def identify_source_type(url_str: str, cmd_list: list[str], cookie_args_list: list[str], history_dict: dict) -> tuple[str, str, str | None, str | None]:
     """Identifica o tipo de origem (vídeo, playlist ou canal) e retorna metadados básicos."""
-    if "watch?v=" in url_str or "youtu.be/" in url_str:
+    provider = get_provider(url_str)
+    
+    # Detecção de vídeo
+    if "watch?v=" in url_str or "youtu.be/" in url_str or (provider == "vimeo" and re.search(r"vimeo\.com/\d+", url_str) and not any(x in url_str for x in ["/showcase/", "/channels/"])):
         return _identify_video_source(url_str, history_dict, cmd_list, cookie_args_list)
-    if "list=" in url_str:
+    
+    # Detecção de playlist / showcase
+    if "list=" in url_str or (provider == "vimeo" and "/showcase/" in url_str):
         return _identify_playlist_source(url_str, history_dict, cmd_list, cookie_args_list)
+    
+    # Detecção de canal
     if "@" in url_str:
         match = re.search(r"@([A-Za-z0-9_-]+)", url_str)
         return (match.group(1) if match else "canal"), "", None, None
+        
+    if provider == "vimeo" and "/channels/" in url_str:
+        match = re.search(r"channels/([A-Za-z0-9_-]+)", url_str)
+        return (match.group(1) if match else "canal"), "", None, None
+
     return "canal", "", None, None
 
 
@@ -323,10 +359,11 @@ def load_or_create_channel_state(
     # SMART SYNC: Se não for um full scan, passamos os IDs conhecidos para parar cedo
     stop_ids = set(state_dict.keys()) if not getattr(sys, "_escriba_full_scan", False) else None
     
-    yt_list = generate_fast_list_json(cmd_list, cookies_list, url_str, history_dict=hist_dict, stop_at_ids=stop_ids)
+    provider_mod = _get_provider_module(url_str)
+    yt_list = provider_mod.generate_fast_list_json(cmd_list, cookies_list, url_str, history_dict=hist_dict, stop_at_ids=stop_ids)
     if not yt_list and not state_dict: return None, [], lang_cached_str, 0
 
-    tag_str = f"@{name_str}" if name_str and name_str != "canal" else None
+    tag_str = f"@{name_str}" if name_str and name_str != "canal" else url_str
     _perform_state_sync(state_dict, yt_list, ident_str, tag_str, chan_id_str, up_id_str, name_str, cwd_path, url_str)
     return json_path, list(state_dict.values()), lang_cached_str, len(yt_list)
 
@@ -519,14 +556,27 @@ def assemble_segments(windows_list: list[dict], topic_breaks_set: set[int]) -> l
         segments_list.append((current_seg_wins_list[0]['timestamp'], len(segments_list) + 1, current_seg_wins_list))
     return segments_list
 
+def get_provider(url: str) -> str:
+    """Retorna 'vimeo' ou 'youtube' baseado na URL."""
+    if not url: return "youtube"
+    if "vimeo.com" in url or re.match(r"^\d+$", url):
+        return "vimeo"
+    return "youtube"
+
 def generate_md_header(video_title: str, video_id: str, video_date: str, duration_str: str, lang_code: str, version: str) -> list[str]:
     """Gera o cabeçalho YAML e título do arquivo Markdown."""
+    provider = get_provider(video_id)
+    if provider == "vimeo":
+        url = f"https://vimeo.com/{video_id}"
+    else:
+        url = f"https://youtube.com/watch?v={video_id}"
+        
     return [
         "---\n", f"title: \"{video_title}\"\n", f"video_id: \"{video_id}\"\n",
-        f"url: \"https://youtube.com/watch?v={video_id}\"\n", f"date: \"{video_date}\"\n",
+        f"url: \"{url}\"\n", f"date: \"{video_date}\"\n",
         f"duration: \"{duration_str}\"\n", f"language: \"{lang_code}\"\n", f"source: \"Escriba v{version}\"\n", "---\n\n",
         f"# {video_title}\n\n", f"> **Data:** {video_date} · **Duração:** {duration_str} · **Idioma:** {lang_code}  \n",
-        f"> 🔗 [https://youtube.com/watch?v={video_id}](https://youtube.com/watch?v={video_id})\n\n"
+        f"> 🔗 [{url}]({url})\n\n"
     ]
 
 def _dedup_lines(lines: list[str]) -> list[str]:
@@ -810,7 +860,7 @@ def parse_args() -> argparse.Namespace:
 def _get_cli_description() -> str:
     """Retorna a string de descrição longa da CLI."""
     return (
-        "Baixa legendas de todos os vídeos de um canal ou playlist do YouTube.\n"
+        "Baixa legendas de todos os vídeos de um canal ou playlist do YouTube/Vimeo.\n"
         f"Versão: {VERSION}\n\n"
         "Substituições: Aplica regras de limpeza de termos (Ekklezia) usando arquivos\n"
         "'rules.txt' na pasta raiz do script e/ou na pasta atual (CWD).\n"
@@ -822,7 +872,7 @@ def _get_cli_description() -> str:
 
 def _add_core_args(parser_obj: argparse.ArgumentParser) -> None:
     """Adiciona argumentos principais (alvo, idioma, formato)."""
-    parser_obj.add_argument("canal", nargs="*", default=None, help="Canal, playlist, vídeo ou URL (ex: @Canal, VIDEO_ID, URL de vídeo/playlist)")
+    parser_obj.add_argument("canal", nargs="*", default=None, help="Canal, playlist, vídeo ou URL (YouTube ou Vimeo)")
     parser_obj.add_argument("-l", "--lang", default="", metavar="LANG", help="Idioma das legendas (ex: pt, en). Padrão: idioma nativo do canal")
     parser_obj.add_argument("-m", "--md", action="store_true", default=True, help="Exporta legendas em .md segmentado por IA via TF-IDF (Padrão: Ativo)")
     parser_obj.add_argument("--no-md", action="store_false", dest="md", help="Desativa a exportação em .md")
@@ -854,12 +904,14 @@ def _add_utility_args(parser_obj: argparse.ArgumentParser) -> None:
 
 # Regex para detectar YouTube video ID (exatamente 11 chars alfanuméricos + _ e -)
 VIDEO_ID_REGEX_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+VIMEO_ID_REGEX_PATTERN = re.compile(r"^\d{7,12}$")
 
 
 def _try_parse_video_input(input_str: str) -> tuple[str, str, str] | None:
     """Tenta parsear input como vídeo (URL ou ID)."""
-    vid_regex = re.compile(r"(?:v=|youtu\.be/|shorts/|live/|embed/|v/)([A-Za-z0-9_-]{11})")
-    match = vid_regex.search(input_str)
+    # YouTube
+    yt_regex = re.compile(r"(?:v=|youtu\.be/|shorts/|live/|embed/|v/)([A-Za-z0-9_-]{11})")
+    match = yt_regex.search(input_str)
     if match:
         vid_id = match.group(1)
         url = input_str if input_str.startswith("http") else f"https://www.youtube.com/watch?v={vid_id}"
@@ -867,6 +919,17 @@ def _try_parse_video_input(input_str: str) -> tuple[str, str, str] | None:
     
     if VIDEO_ID_REGEX_PATTERN.match(input_str):
         return f"https://www.youtube.com/watch?v={input_str}", "video", input_str
+
+    # Vimeo
+    vimeo_regex = re.compile(r"vimeo\.com/(\d+)")
+    match = vimeo_regex.search(input_str)
+    if match:
+        vid_id = match.group(1)
+        return input_str, "video", vid_id
+    
+    if VIMEO_ID_REGEX_PATTERN.match(input_str):
+        return f"https://vimeo.com/{input_str}", "video", input_str
+
     return None
 
 
@@ -874,6 +937,12 @@ def parse_input_type(channel_input_str: str) -> tuple[str, str, str]:
     """Detecta o tipo de entrada (vídeo, playlist ou canal)."""
     vid_res = _try_parse_video_input(channel_input_str)
     if vid_res: return vid_res
+
+    # Vimeo detection
+    if "vimeo.com" in channel_input_str:
+        if "/showcase/" in channel_input_str or "/channels/" in channel_input_str:
+            return channel_input_str, "playlist", ""
+        return channel_input_str, "channel", ""
 
     if "list=" in channel_input_str or "/playlist/" in channel_input_str:
         url = channel_input_str if channel_input_str.startswith("http") else f"https://www.youtube.com/{channel_input_str.lstrip('/')}"
@@ -883,10 +952,20 @@ def parse_input_type(channel_input_str: str) -> tuple[str, str, str]:
     return url, "channel", ""
 
 
+
+
+
+def _get_provider_module(url_str: str):
+    """Retorna o módulo (youtube ou vimeo) baseado na URL."""
+    return vimeo if get_provider(url_str) == "vimeo" else youtube
+
+
 def _infer_canal_from_json(json_data_dict: dict, json_name_str: str) -> str | None:
     """Tenta inferir o nome do canal de campos variados do JSON ou do nome do arquivo."""
     canal_str = json_data_dict.get("youtube_channels", [None])[0] or \
+                json_data_dict.get("vimeo_channels", [None])[0] or \
                 json_data_dict.get("youtube_channel") or \
+                json_data_dict.get("vimeo_channel") or \
                 json_data_dict.get("channel") or \
                 json_data_dict.get("channel_context")
     if canal_str: return canal_str
@@ -940,7 +1019,7 @@ def _print_session_info(cli_args: argparse.Namespace, latest_json_path: Path | N
 def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
     """Etapa 1: configura tudo que precisamos antes de começar."""
     cwd_path = Path.cwd()
-    script_dir_path, yt_dlp_cmd_list = setup_environment()
+    script_dir_path, yt_dlp_cmd_list = youtube.setup_environment()
     
     latest_json_path = _auto_detect_channel(cwd_path, cli_args) if not cli_args.canal else None
     url_str, _, _ = parse_input_type(cli_args.canal)
@@ -951,7 +1030,8 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
         cwd_path=cwd_path, channel_dir_name=cwd_path.name,
         script_dir_path=script_dir_path, yt_dlp_cmd_list=yt_dlp_cmd_list,
         channel_input_url_or_handle=cli_args.canal, channel_url=url_str,
-        discovered_uploader_id=_resolve_uploader_id(cli_args.canal, url_str)
+        discovered_uploader_id=_resolve_uploader_id(cli_args.canal, url_str),
+        provider=get_provider(url_str)
     )
 
 def _warm_up_cookies(session_config: SessionConfig, cookie_args_list: list[str]) -> list[str]:
@@ -965,8 +1045,12 @@ def _warm_up_cookies(session_config: SessionConfig, cookie_args_list: list[str])
         )
     
     if cookies_txt_path.is_file():
-        filter_youtube_cookies(cookies_txt_path)
-        print_info("Cookies filtrados limitados ao YouTube (trackers removidos).")
+        if session_config.provider == "vimeo":
+            filter_vimeo_cookies(cookies_txt_path)
+            print_info("Cookies filtrados limitados ao Vimeo.")
+        else:
+            filter_youtube_cookies(cookies_txt_path)
+            print_info("Cookies filtrados limitados ao YouTube (trackers removidos).")
         return configure_cookies(session_config.cwd_path, session_config.script_dir_path, False, silent_bool=True)
     
     print_err("Falha na extração de cookies do navegador.")
@@ -1015,7 +1099,8 @@ def _detect_and_report_language(session_config: SessionConfig, cookies_list: lis
         session_config.cwd_path, session_config.yt_dlp_cmd_list, cookies_list, session_config.channel_url,
         only_peek_lang_bool=True
     )
-    lang_str = user_lang_str or detect_language(
+    provider_mod = _get_provider_module(session_config.channel_url)
+    lang_str = user_lang_str or provider_mod.detect_language(
         session_config.yt_dlp_cmd_list, cookies_list, session_config.channel_url, cached_lang_str
     )
     if user_lang_str: 
@@ -1038,7 +1123,7 @@ def _sync_initial_state(
         save_channel_state_json(
             json_path, state_list, 
             detected_language_str=lang_cached if lang_cached else language_opt_string,
-            youtube_channel_url_str=session_config.channel_url,
+            channel_url_str=session_config.channel_url,
             channel_handle_str=session_config.discovered_uploader_id
         )
     return json_path, state_list, lang_cached, total
@@ -1064,7 +1149,7 @@ def _resolve_filter_handle(filter_str: str) -> str:
     if "/@" in handle_str:
         match_obj = re.search(r'/@([A-Za-z0-9_-]+)', handle_str)
         if match_obj: handle_str = f"@{match_obj.group(1)}"
-    elif not handle_str.startswith("@"):
+    elif not handle_str.startswith("@") and not handle_str.startswith("http"):
         handle_str = f"@{handle_str}"
     return handle_str
 
@@ -1216,9 +1301,11 @@ def process_videos(
             prefix = f"{conf_obj.channel_dir_name}-"
             for f in conf_obj.cwd_path.iterdir():
                 if f.is_file() and f.name.startswith(prefix):
-                    # Extrai o video_id (11 chars logo após o prefixo)
-                    vid_id = f.name[len(prefix):len(prefix)+11]
-                    if len(vid_id) == 11:
+                    # Extrai o video_id (YouTube=11 chars, Vimeo=números)
+                    # O padrão é {folder_name}-{video_id}.ext
+                    match = re.search(fr"^{re.escape(prefix)}([A-Za-z0-9_-]{{11}}|\d+)", f.name)
+                    if match:
+                        vid_id = match.group(1)
                         cache[vid_id].append(f.name)
             conf_obj.disk_files_cache = dict(cache)
 
@@ -1319,7 +1406,8 @@ def _download_and_process_single(
 ) -> int:
     """Realiza o download e processamento pós-download de um vídeo único."""
     print_dl(f"{video_dict['video_id']}{RESET}  {DIM}legenda/{lang}{RESET}", prefix)
-    exit_code = download_video(conf.yt_dlp_cmd_list, cookies, video_dict["video_id"], lang, conf.channel_dir_name)
+    provider_mod = _get_provider_module(conf.channel_url)
+    exit_code = provider_mod.download_video(conf.yt_dlp_cmd_list, cookies, video_dict["video_id"], lang, conf.channel_dir_name)
     
     _update_metadata_from_json(conf, video_dict, dirty)
 
@@ -1371,7 +1459,7 @@ def _persist_state(json_path: Path, full_list: list[dict], language_opt_str: str
     save_channel_state_json(
         json_path, full_list, 
         detected_language_str=language_opt_str,
-        youtube_channel_url_str=url_to_save,
+        channel_url_str=url_to_save,
         channel_handle_str=session_config.discovered_uploader_id
     )
 
@@ -1616,7 +1704,7 @@ def _process_srt_item(srt_path: Path, idx_int: int, total_int: int, lookup_dict:
 
 def _extract_video_id_from_srt(srt_path: Path) -> str:
     """
-    Extrai o ID do vídeo (11 caracteres) do nome do arquivo SRT.
+    Extrai o ID do vídeo (YouTube=11 chars ou Vimeo=numérico) do nome do arquivo SRT.
     Utiliza a lógica robusta centralizada em utils.py.
     """
     return extract_video_id(srt_path.name)
@@ -1715,8 +1803,13 @@ def _save_upgraded_md(md_path: Path, content_str: str, meta_dict: dict, prefix_s
 
 def _build_new_md_header(md_path: Path, meta_dict: dict) -> str:
     """Extrai ID e gera novo cabeçalho YAML."""
-    vid_id_match_obj = re.search(r"watch\?v=([A-Za-z0-9_-]{11})", meta_dict.get("url", ""))
-    vid_id_str = vid_id_match_obj.group(1) if vid_id_match_obj else "unknown"
+    vid_id_str = "unknown"
+    if "vimeo.com/" in meta_dict.get("url", ""):
+        vimeo_id_match = re.search(r"vimeo\.com/(\d+)", meta_dict.get("url", ""))
+        if vimeo_id_match: vid_id_str = vimeo_id_match.group(1)
+    else:
+        yt_id_match = re.search(r"watch\?v=([A-Za-z0-9_-]{11})", meta_dict.get("url", ""))
+        if yt_id_match: vid_id_str = yt_id_match.group(1)
     
     header_list = generate_md_header(
         meta_dict.get("title", md_path.stem),
@@ -1818,7 +1911,8 @@ def _handle_cli_pre_flows(cli_args: argparse.Namespace) -> bool:
 
 def _handle_new_channel_flow(json_path: Path, canal_str: str, cli_args_ns: argparse.Namespace, cwd_path: Path) -> bool:
     """Trata a detecção e processamento de um novo canal."""
-    is_new_bool, _ = register_channel_in_json(json_path, canal_str)
+    provider = get_provider(canal_str)
+    is_new_bool, _ = register_channel_in_json(json_path, canal_str, provider_str=provider)
     if not is_new_bool:
         return False
 
@@ -1839,8 +1933,14 @@ def _get_channels_to_sync(json_path: Path, user_canal_str: str | None) -> list[s
         return []
     try:
         data_dict = json.loads(json_path.read_text(encoding="utf-8"))
-        chans_list = data_dict.get("youtube_channels", [])
-        return list(chans_list) if isinstance(chans_list, list) else []
+        yt_chans = data_dict.get("youtube_channels", [])
+        vi_chans = data_dict.get("vimeo_channels", [])
+        
+        all_chans = []
+        if isinstance(yt_chans, list): all_chans.extend(yt_chans)
+        if isinstance(vi_chans, list): all_chans.extend(vi_chans)
+        
+        return all_chans
     except Exception:
         return []
 

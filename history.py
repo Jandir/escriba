@@ -76,7 +76,8 @@ def load_all_local_history(cwd_path: Path) -> Dict[str, Dict[str, Any]]:
     blacklist_names_set: set[str] = {"package.json", "package-lock.json", "requirements.json", "env.json"}
     
     # Regex para identificar IDs de vídeo em arquivos .info.json (padrão do yt-dlp)
-    video_id_regex_obj: re.Pattern = re.compile(r"([A-Za-z0-9_-]{11})(?=\.info\.json$)")
+    # Suporta YouTube (11 chars) e Vimeo (numérico)
+    video_id_regex_obj: re.Pattern = re.compile(r"([A-Za-z0-9_-]{11}|\d+)(?=\.info\.json$)")
     
     for directory_path in _get_history_search_dirs(cwd_path):
         _scan_directory_for_history(directory_path, blacklist_names_set, video_id_regex_obj, history_map_dict)
@@ -228,7 +229,7 @@ def save_channel_state_json(
     videos_list: List[Dict[str, Any]], 
     channel_handle_str: Optional[str] = None, 
     detected_language_str: Optional[str] = None, 
-    youtube_channel_url_str: Optional[str] = None
+    channel_url_str: Optional[str] = None
 ) -> None:
     """Salva o banco de dados JSON do canal no disco de forma segura."""
     if not json_path: 
@@ -242,7 +243,7 @@ def save_channel_state_json(
         "videos": final_videos_list
     }
     
-    _populate_output_metadata(output_data_dict, existing_data_dict, channel_handle_str, detected_language_str, youtube_channel_url_str)
+    _populate_output_metadata(output_data_dict, existing_data_dict, channel_handle_str, detected_language_str, channel_url_str)
     _write_json_atomically(json_path, output_data_dict)
 
 
@@ -282,9 +283,19 @@ def _populate_output_metadata(
     url_str: Optional[str]
 ) -> None:
     """Preenche metadados no dicionário de saída, preservando dados existentes."""
-    existing_channels_list: Any = existing_dict.get("youtube_channels", [])
-    if isinstance(existing_channels_list, list) and existing_channels_list:
-        output_data_dict["youtube_channels"] = existing_channels_list
+    # Preservar listas de canais de ambos os provedores
+    for key_str in ["youtube_channels", "vimeo_channels"]:
+        existing_list = existing_dict.get(key_str, [])
+        if isinstance(existing_list, list) and existing_list:
+            output_data_dict[key_str] = existing_list
+            
+    # Determinar provedor atual
+    provider_str = "vimeo" if url_str and "vimeo.com" in url_str else "youtube"
+    channels_key_str = f"{provider_str}_channels"
+    url_key_str = f"{provider_str}_channel"
+
+    # Se o handle não estiver na lista correta, ele será adicionado pelo register_channel_in_json mais tarde,
+    # mas aqui garantimos que as chaves de URL e contexto existam.
     
     context_str: Optional[str] = handle_str or existing_dict.get("channel_context")
     if context_str: 
@@ -294,9 +305,9 @@ def _populate_output_metadata(
     if lang_val_str: 
         output_data_dict["detected_language"] = lang_val_str
         
-    final_url_str: Optional[str] = url_str or existing_dict.get("youtube_channel")
+    final_url_str: Optional[str] = url_str or existing_dict.get(url_key_str) or existing_dict.get("youtube_channel") or existing_dict.get("channel")
     if final_url_str: 
-        output_data_dict["youtube_channel"] = final_url_str
+        output_data_dict[url_key_str] = final_url_str
 
 
 def _merge_duplicate_inline(existing_dict: Dict[str, Any], new_dict: Dict[str, Any]) -> None:
@@ -563,24 +574,31 @@ def _cleanup_legacy_migration_file(json_path: Path, is_legacy_name_bool: bool) -
         json_path.unlink()
 
 
-def register_channel_in_json(json_path: Path, channel_handle_str: str) -> Tuple[bool, bool]:
-    """Verifica se um canal do YouTube já foi registrado no banco de dados JSON."""
-    if not channel_handle_str: 
+def register_channel_in_json(json_path: Path, handle_str: str, provider_str: str = "youtube") -> Tuple[bool, bool]:
+    """Adiciona um handle à lista de canais (youtube_channels ou vimeo_channels) se não existir."""
+    if not handle_str: 
         return False, False
-    
-    handle_normalized_str: str = _normalize_handle(channel_handle_str)
+    if not json_path.exists(): 
+        return False, False
+        
+    final_handle = handle_str
+    if provider_str == "youtube":
+        final_handle = _normalize_handle(handle_str)
+        
     data_dict: Dict[str, Any] = _load_existing_json_safely(json_path)
     
-    channels_list: Any = data_dict.get("youtube_channels", [])
+    channels_key_str = f"{provider_str}_channels"
+    channels_list: List[str] = data_dict.get(channels_key_str, [])
+    
     if not isinstance(channels_list, list): 
         channels_list = []
-
-    if _is_handle_registered(handle_normalized_str, channels_list):
+        
+    if _is_handle_registered(final_handle, channels_list):
         return False, True
-
-    channels_list.append(handle_normalized_str)
-    data_dict["youtube_channels"] = channels_list
-    success_bool: bool = _atomic_json_dump(json_path, data_dict)
+        
+    channels_list.append(final_handle)
+    data_dict[channels_key_str] = channels_list
+    success_bool = _atomic_json_dump(json_path, data_dict)
     
     return True, success_bool
 
