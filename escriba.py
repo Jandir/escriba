@@ -214,11 +214,11 @@ def identify_source_type(url_str: str, cmd_list: list[str], cookie_args_list: li
     
     # Detecção de canal
     if "@" in url_str:
-        match = re.search(r"@([A-Za-z0-9_-]+)", url_str)
+        match = re.search(r"@([A-Za-z0-9_\-\.]+)", url_str)
         return (match.group(1) if match else "canal"), "", None, None
         
     if provider == "vimeo" and "/channels/" in url_str:
-        match = re.search(r"channels/([A-Za-z0-9_-]+)", url_str)
+        match = re.search(r"channels/([A-Za-z0-9_\-\.]+)", url_str)
         return (match.group(1) if match else "canal"), "", None, None
 
     return "canal", "", None, None
@@ -260,8 +260,11 @@ def _update_existing_entry(exist_dict: dict, entry_dict: dict, playlist_str: str
         if playlist_str not in exist_dict["playlists"]:
             exist_dict["playlists"].append(playlist_str)
     
-    if tag_str and not exist_dict.get("source_channel"):
-        exist_dict["source_channel"] = tag_str
+    if tag_str:
+        old_tag = exist_dict.get("source_channel")
+        # Se não tem tag, ou se a nova tag é uma versão mais completa da antiga (ex: @Goshen -> @Goshen.Official)
+        if not old_tag or (tag_str.lower().startswith(old_tag.lower()) and tag_str.lower() != old_tag.lower()):
+            exist_dict["source_channel"] = tag_str
 
 
 def _add_new_entry(state_dict: dict, vid_id_str: str, entry_dict: dict, playlist_str: str | None, tag_str: str | None) -> None:
@@ -999,7 +1002,7 @@ def _resolve_uploader_id(input_str: str, url_str: str) -> str | None:
     """Extrai o ID do uploader (handle) da URL ou input."""
     if input_str.startswith("@"): return input_str
     if "/@" in url_str:
-        match = re.search(r"/(@[A-Za-z0-9_-]+)", url_str)
+        match = re.search(r"/(@[A-Za-z0-9_\-\.]+)", url_str)
         if match: return match.group(1)
     return None
 
@@ -1147,7 +1150,7 @@ def _resolve_filter_handle(filter_str: str) -> str:
     """Normaliza o handle do canal para filtragem."""
     handle_str = filter_str
     if "/@" in handle_str:
-        match_obj = re.search(r'/@([A-Za-z0-9_-]+)', handle_str)
+        match_obj = re.search(r'/@([A-Za-z0-9_\-\.]+)', handle_str)
         if match_obj: handle_str = f"@{match_obj.group(1)}"
     elif not handle_str.startswith("@") and not handle_str.startswith("http"):
         handle_str = f"@{handle_str}"
@@ -1157,7 +1160,15 @@ def _resolve_filter_handle(filter_str: str) -> str:
 def _filter_by_handle(working_list: list[dict], channel_filter_str: str, is_first: bool) -> list[dict]:
     """Filtra vídeos por handle de canal e inclui órfãos se for o primeiro canal."""
     handle_str = _resolve_filter_handle(channel_filter_str).lower()
-    filtered_list = [v for v in working_list if str(v.get("source_channel", "")).lower() == handle_str]
+    
+    # Normalização para comparação flexível (ex: @goshen.official -> @goshen)
+    def normalize(h): return str(h).lower().replace(".official", "").replace("-official", "")
+    target_norm = normalize(handle_str)
+
+    filtered_list = [
+        v for v in working_list 
+        if normalize(v.get("source_channel", "")) == target_norm
+    ]
     
     if is_first:
         orphans_list = [v for v in working_list if not v.get("source_channel")]
@@ -1165,7 +1176,7 @@ def _filter_by_handle(working_list: list[dict], channel_filter_str: str, is_firs
             print_info(f"Incluindo {BOLD}{len(orphans_list)}{RESET} vídeo(s) órfãos.")
             filtered_list.extend(orphans_list)
     
-    print_info(f"Canal filtrado: {BOLD}{handle_str}{RESET} → {len(filtered_list)} vídeo(s).")
+    print_info(f"Canal filtrado: {BOLD}{handle_str}{RESET} (base: {target_norm}) → {len(filtered_list)} vídeo(s).")
     return filtered_list
 
 

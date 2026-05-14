@@ -142,37 +142,57 @@ def detect_language(
         
     print_info("Detectando idioma do canal (amostragem de 5 vídeos)...")
     
-    # URL formatada para pegar a lista de vídeos
-    detect_url_str: str = channel_url_str.rstrip("/") + "/videos" if "watch?v=" not in channel_url_str else channel_url_str
-    
-    cmd_list: List[str] = yt_dlp_cmd_list + cookie_args_list + [
-        "--print", "language", 
-        "--playlist-end", "5", 
-        "--ignore-errors", 
-        "--flat-playlist", 
-        detect_url_str
+    # Tentamos primeiro a URL base do canal, depois /videos e /live se necessário
+    # yt-dlp geralmente lida bem com a URL base para pegar os envios mais recentes
+    urls_to_try: List[str] = [
+        channel_url_str.rstrip("/"),
+        channel_url_str.rstrip("/") + "/live",
+        channel_url_str.rstrip("/") + "/videos"
     ]
     
-    try:
-        process_result_obj = subprocess.run(cmd_list, capture_output=True, text=True, timeout=20)
-        langs_list: List[str] = [
-            line_str.strip().lower() 
-            for line_str in process_result_obj.stdout.splitlines() 
-            if line_str.strip() and line_str.lower() not in ("na", "none")
+    # Se for uma URL de vídeo direto, usamos apenas ela
+    if "watch?v=" in channel_url_str:
+        urls_to_try = [channel_url_str]
+
+    langs_list: List[str] = []
+    
+    for url in urls_to_try:
+        if langs_list: break # Se já pegamos algo, não precisa tentar as outras abas
+        
+        cmd_list: List[str] = yt_dlp_cmd_list + cookie_args_list + [
+            "--print", "language", 
+            "--playlist-end", "5", 
+            "--ignore-errors", 
+            "--flat-playlist", 
+            url
         ]
         
-        if langs_list:
-            # Pega o idioma que mais apareceu na amostra
-            most_common_tuple: Tuple[str, int] = Counter(langs_list).most_common(1)[0]
-            most_common_lang_str: str = most_common_tuple[0]
-            clean_lang_str: str = most_common_lang_str.split("-")[0].split("_")[0]
-            print_ok(f"Idioma detectado: {BOLD}{clean_lang_str}{RESET}")
-            return f"^{clean_lang_str}.*"
-            
-    except Exception as error_obj:
-        print_warn(f"Erro na detecção de idioma: {error_obj}")
+        try:
+            process_result_obj = subprocess.run(cmd_list, capture_output=True, text=True, timeout=20)
+            current_langs = [
+                line_str.strip().lower() 
+                for line_str in process_result_obj.stdout.splitlines() 
+                if line_str.strip() and line_str.lower() not in ("na", "none")
+            ]
+            langs_list.extend(current_langs)
+        except Exception as error_obj:
+            print_warn(f"Erro ao acessar {url}: {error_obj}")
+    
+    if langs_list:
+        # Pega o idioma que mais apareceu na amostra
+        most_common_tuple: Tuple[str, int] = Counter(langs_list).most_common(1)[0]
+        most_common_lang_str: str = most_common_tuple[0]
+        clean_lang_str: str = most_common_lang_str.split("-")[0].split("_")[0]
+        print_ok(f"Idioma detectado: {BOLD}{clean_lang_str}{RESET}")
+        return f"^{clean_lang_str}.*"
         
     fallback_lang_str: str = os.getenv("DEFAULT_LANGUAGE", "pt")
+    # Se falhar totalmente, sugerimos incluir inglês além do padrão para maior cobertura
+    # Isso ajuda se o canal for gringo e o script estiver configurado para PT por padrão
+    if fallback_lang_str == "pt":
+        print_warn(f"Idioma não detectado. Usando padrão expandido: {BOLD}pt, en{RESET}")
+        return "^(pt|en).*"
+        
     print_warn(f"Idioma não detectado. Usando padrão: {BOLD}{fallback_lang_str}{RESET}")
     return f"^{fallback_lang_str}.*"
 
@@ -197,64 +217,73 @@ def generate_fast_list_json(
     """
     print_info(f"Fase 1: Mapeando vídeos do canal...")
     
-    cmd_list: List[str] = yt_dlp_cmd_list + cookie_args_list + [
-        "--flat-playlist", "--dump-json", "--ignore-errors", channel_url_str
-    ]
+    # Tenta a URL original e, se for handle (@), tenta também /videos como fallback
+    urls_to_try = [channel_url_str]
+    if "@" in channel_url_str and not channel_url_str.endswith("/videos"):
+        urls_to_try.append(channel_url_str.rstrip("/") + "/videos")
+    
     videos_found_list: List[Dict[str, Any]] = []
     
-    try:
-        # Popen permite que leiamos a saída do comando enquanto ele ainda está rodando (streaming)
-        process_obj = subprocess.Popen(
-            cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
-        )
+    for current_url in urls_to_try:
+        if videos_found_list: break
         
-        if process_obj.stdout:
-            for line_str in process_obj.stdout:
-                try:
-                    video_data_dict: Dict = json.loads(line_str.strip())
-                    video_id_str: str = video_data_dict.get("id", "")
-                    if not video_id_str: 
-                        continue
-                    
-                    # SMART SYNC: Se já temos esse vídeo, paramos de listar o canal (ordem cronológica reversa)
-                    if stop_at_ids and video_id_str in stop_at_ids:
-                        process_obj.terminate()
-                        break
-
-                    # Extrai e formata a data usando a utilidade centralizada
-                    raw_date_any = video_data_dict.get("upload_date") or video_data_dict.get("publish_date") or video_data_dict.get("date")
-                    if not raw_date_any and history_dict:
-                        publish_date_str = history_dict.get(video_id_str, {}).get("publish_date", "Desconhecida")
-                    else:
-                        publish_date_str = format_date(raw_date_any)
-                    
-                    videos_found_list.append({
-                        "video_id": video_id_str,
-                        "title": video_data_dict.get("title") or "N/A",
-                        "publish_date": publish_date_str,
-                        "subtitle_downloaded": False,
-                        "info_downloaded": False,
-                        "has_no_subtitle": False
-                    })
-                    
-                    # Feedback visual de progresso na mesma linha
-                    sys.stdout.write(f"\r{ICON_WAIT}  {BCYAN}Vídeos mapeados: {len(videos_found_list)}{RESET}")
-                    sys.stdout.flush()
-                    
-                except Exception:
-                    continue
-                    
-        process_obj.wait()
-        print()  # Quebra de linha após o contador
+        cmd_list: List[str] = yt_dlp_cmd_list + cookie_args_list + [
+            "--flat-playlist", "--dump-json", "--ignore-errors", current_url
+        ]
         
-        if process_obj.returncode != 0 and not videos_found_list and not (stop_at_ids and process_obj.returncode == -15):
-            _refresh_cookies_on_error(Path.cwd(), Path(__file__).parent.resolve())
+        try:
+            # Popen permite que leiamos a saída do comando enquanto ele ainda está rodando (streaming)
+            process_obj = subprocess.Popen(
+                cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+            )
             
-        return videos_found_list
+            if process_obj.stdout:
+                for line_str in process_obj.stdout:
+                    try:
+                        video_data_dict: Dict = json.loads(line_str.strip())
+                        video_id_str: str = video_data_dict.get("id", "")
+                        if not video_id_str: 
+                            continue
+                        
+                        # SMART SYNC: Se já temos esse vídeo, paramos de listar o canal (ordem cronológica reversa)
+                        if stop_at_ids and video_id_str in stop_at_ids:
+                            process_obj.terminate()
+                            break
+
+                        # Extrai e formata a data usando a utilidade centralizada
+                        raw_date_any = video_data_dict.get("upload_date") or video_data_dict.get("publish_date") or video_data_dict.get("date")
+                        if not raw_date_any and history_dict:
+                            publish_date_str = history_dict.get(video_id_str, {}).get("publish_date", "Desconhecida")
+                        else:
+                            publish_date_str = format_date(raw_date_any)
+                        
+                        videos_found_list.append({
+                            "video_id": video_id_str,
+                            "title": video_data_dict.get("title") or "N/A",
+                            "publish_date": publish_date_str,
+                            "subtitle_downloaded": False,
+                            "info_downloaded": False,
+                            "has_no_subtitle": False
+                        })
+                        
+                        # Feedback visual de progresso na mesma linha
+                        sys.stdout.write(f"\r{ICON_WAIT}  {BCYAN}Vídeos mapeados: {len(videos_found_list)}{RESET}")
+                        sys.stdout.flush()
+                        
+                    except Exception:
+                        continue
+            
+            process_obj.wait()
+            print()  # Quebra de linha após o contador
+            
+            if process_obj.returncode != 0 and not videos_found_list and not (stop_at_ids and process_obj.returncode == -15):
+                _refresh_cookies_on_error(Path.cwd(), Path(__file__).parent.resolve())
+            
+        except Exception as error_obj:
+            print_err(f"Falha crítica na descoberta: {error_obj}")
+            return []
     
-    except Exception as error_obj:
-        print_err(f"Falha crítica na descoberta: {error_obj}")
-        return []
+    return videos_found_list
 
 
 def download_video(
