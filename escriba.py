@@ -368,7 +368,7 @@ def load_or_create_channel_state(
 
     tag_str = f"@{name_str}" if name_str and name_str != "canal" else url_str
     _perform_state_sync(state_dict, yt_list, ident_str, tag_str, chan_id_str, up_id_str, name_str, cwd_path, url_str)
-    return json_path, list(state_dict.values()), lang_cached_str, len(yt_list)
+    return json_path, list(state_dict.values()), lang_cached_str, len(state_dict)
 
 
 def _perform_state_sync(state_dict: dict, yt_list: list, ident_str: str, tag_str: str, chan_id_str: str, up_id_str: str, name_str: str, cwd_path: Path, url_str: str):

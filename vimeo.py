@@ -99,6 +99,9 @@ def generate_fast_list_json(
         "--flat-playlist", "--dump-json", "--ignore-errors", channel_url_str
     ]
     videos_found_list: List[Dict[str, Any]] = []
+    consecutive_known_count = 0
+    MAX_CONSECUTIVE_KNOWN = 10  # Tolerância para vídeos fixados ou shorts
+    
     
     try:
         process_obj = subprocess.Popen(
@@ -114,8 +117,12 @@ def generate_fast_list_json(
                         continue
                     
                     if stop_at_ids and video_id_str in stop_at_ids:
-                        process_obj.terminate()
-                        break
+                        consecutive_known_count += 1
+                        if consecutive_known_count >= MAX_CONSECUTIVE_KNOWN:
+                            process_obj.terminate()
+                            break
+                    else:
+                        consecutive_known_count = 0
 
                     raw_date_any = video_data_dict.get("upload_date") or video_data_dict.get("publish_date") or video_data_dict.get("date")
                     if not raw_date_any and history_dict:

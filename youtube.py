@@ -217,15 +217,23 @@ def generate_fast_list_json(
     """
     print_info(f"Fase 1: Mapeando vídeos do canal...")
     
-    # Tenta a URL original e, se for handle (@), tenta também /videos como fallback
+    # Tenta a URL original. Se for a raiz de um canal (ex: @handle),
+    # dividimos em abas específicas para garantir a ordem cronológica
+    # e permitir que o Smart Sync funcione corretamente em todas elas.
     urls_to_try = [channel_url_str]
-    if "@" in channel_url_str and not channel_url_str.endswith("/videos"):
-        urls_to_try.append(channel_url_str.rstrip("/") + "/videos")
+    is_channel_base = ("@" in channel_url_str or "/channel/" in channel_url_str or "/c/" in channel_url_str)
+    
+    # Se terminar com uma aba específica, não é a raiz
+    if is_channel_base and not any(channel_url_str.rstrip("/").endswith(x) for x in ["/videos", "/streams", "/shorts", "/releases", "/playlists"]):
+        base_url = channel_url_str.rstrip("/")
+        urls_to_try = [f"{base_url}/videos", f"{base_url}/streams", f"{base_url}/shorts"]
     
     videos_found_list: List[Dict[str, Any]] = []
     
     for current_url in urls_to_try:
-        if videos_found_list: break
+        consecutive_known_count = 0
+        MAX_CONSECUTIVE_KNOWN = 10  # Tolerância para vídeos fixados ou shorts
+
         
         cmd_list: List[str] = yt_dlp_cmd_list + cookie_args_list + [
             "--flat-playlist", "--dump-json", "--ignore-errors", current_url
@@ -245,10 +253,15 @@ def generate_fast_list_json(
                         if not video_id_str: 
                             continue
                         
-                        # SMART SYNC: Se já temos esse vídeo, paramos de listar o canal (ordem cronológica reversa)
+                        # SMART SYNC: Se já temos esse vídeo, incrementa contador.
+                        # Para evitar parar cedo por vídeos fixados (pinned), exigimos múltiplos consecutivos.
                         if stop_at_ids and video_id_str in stop_at_ids:
-                            process_obj.terminate()
-                            break
+                            consecutive_known_count += 1
+                            if consecutive_known_count >= MAX_CONSECUTIVE_KNOWN:
+                                process_obj.terminate()
+                                break
+                        else:
+                            consecutive_known_count = 0
 
                         # Extrai e formata a data usando a utilidade centralizada
                         raw_date_any = video_data_dict.get("upload_date") or video_data_dict.get("publish_date") or video_data_dict.get("date")

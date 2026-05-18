@@ -93,19 +93,34 @@ def _scan_directory_for_history(
 ) -> None:
     """Varre um único diretório procurando arquivos JSON com dados de vídeos."""
     try:
-        for json_file_path in directory_path.glob("*.json"):
+        json_files_list: List[Path] = list(directory_path.glob("*.json"))
+        
+        # 1. Primeiro processamos os bancos de dados mestre (escriba_ ou lista_)
+        # Isso garante que history_map_dict já contenha a base de dados conhecida.
+        for json_file_path in json_files_list:
             if json_file_path.name in blacklist_names_set: 
                 continue
-                
-            # Se o arquivo começa com escriba_ ou lista_, ele é um banco de dados mestre.
             if json_file_path.name.startswith(("escriba_", "lista_")):
                 _parse_master_json(json_file_path, history_map_dict)
+                
+        # 2. Depois processamos os arquivos avulsos (.info.json),
+        # pulando os que já estão completos no banco de dados mestre para acelerar a leitura.
+        for json_file_path in json_files_list:
+            if json_file_path.name in blacklist_names_set: 
+                continue
+            if json_file_path.name.startswith(("escriba_", "lista_")):
                 continue
                 
-            # Caso contrário, pode ser um .info.json de um vídeo específico.
             match_obj: Optional[re.Match] = vid_regex_obj.search(json_file_path.name)
             if match_obj:
-                _parse_video_metadata_json(json_file_path, match_obj.group(1), history_map_dict)
+                video_id_str: str = match_obj.group(1)
+                existing_data: Optional[Dict[str, Any]] = history_map_dict.get(video_id_str)
+                
+                # Otimização: se já temos a data de publicação e 'info_downloaded', não lemos o arquivo avulso.
+                if existing_data and existing_data.get("info_downloaded") and existing_data.get("publish_date") not in ["N/A", "Desconhecida", ""]:
+                    continue
+                    
+                _parse_video_metadata_json(json_file_path, video_id_str, history_map_dict)
     except Exception:
         pass
 
@@ -229,9 +244,12 @@ def save_channel_state_json(
     videos_list: List[Dict[str, Any]], 
     channel_handle_str: Optional[str] = None, 
     detected_language_str: Optional[str] = None, 
-    channel_url_str: Optional[str] = None
+    channel_url_str: Optional[str] = None,
+    youtube_channel_url_str: Optional[str] = None
 ) -> None:
     """Salva o banco de dados JSON do canal no disco de forma segura."""
+    if youtube_channel_url_str is not None:
+        channel_url_str = youtube_channel_url_str
     if not json_path: 
         return
     
@@ -577,8 +595,6 @@ def _cleanup_legacy_migration_file(json_path: Path, is_legacy_name_bool: bool) -
 def register_channel_in_json(json_path: Path, handle_str: str, provider_str: str = "youtube") -> Tuple[bool, bool]:
     """Adiciona um handle à lista de canais (youtube_channels ou vimeo_channels) se não existir."""
     if not handle_str: 
-        return False, False
-    if not json_path.exists(): 
         return False, False
         
     final_handle = handle_str
