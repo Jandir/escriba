@@ -83,28 +83,6 @@ def test_setup_environment_success():
         assert "yt-dlp" in cmd_list
         assert isinstance(script_dir_path, Path)
 
-def test_detect_language_ignores_invalid_tags():
-    """Verifica se tags 'NA' ou 'none' são ignoradas na detecção de idioma."""
-    with patch("subprocess.run") as mock_run:
-        mock_result = MagicMock()
-        mock_result.stdout = "NA\nnone\nNA\npt\n"
-        mock_run.return_value = mock_result
-        
-        result_str = escriba.detect_language([], [], "http://dummy")
-        assert result_str == "^pt$"
-
-def test_detect_language_fallback():
-    """Verifica o fallback para o idioma padrão quando nada é detectado."""
-    with patch("subprocess.run") as mock_run:
-        mock_result = MagicMock()
-        mock_result.stdout = "NA\nNA\n"
-        mock_run.return_value = mock_result
-        
-        with patch.dict("os.environ", {"DEFAULT_LANGUAGE": "pt_BR"}):
-            result_str = escriba.detect_language([], [], "http://dummy")
-            assert result_str == "^pt_BR$"
-
-
 # ─── Parsing de Entradas ──────────────────────────────────────────────────────
 
 def test_parse_input_type_full_video_url():

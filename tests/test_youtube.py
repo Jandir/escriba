@@ -36,3 +36,30 @@ def test_filter_youtube_cookies_missing_file():
     """Verifica se a função lida graciosamente com a ausência do arquivo de cookies."""
     # Não deve levantar erro
     filter_youtube_cookies(Path("non_existent_cookies_file.txt"))
+
+
+from unittest.mock import patch, MagicMock
+import os
+
+def test_detect_language_ignores_invalid_tags():
+    """Verifica se tags 'NA' ou 'none' são ignoradas na detecção de idioma."""
+    with patch("subprocess.run") as mock_run:
+        mock_result = MagicMock()
+        mock_result.stdout = "NA\nnone\nNA\npt\n"
+        mock_run.return_value = mock_result
+
+        import youtube
+        result_str = youtube.detect_language([], [], "http://dummy")
+        assert result_str == "^pt.*"
+
+def test_detect_language_fallback():
+    """Verifica o fallback para o idioma padrão quando nada é detectado."""
+    with patch("subprocess.run") as mock_run:
+        mock_result = MagicMock()
+        mock_result.stdout = "NA\nNA\n"
+        mock_run.return_value = mock_result
+
+        with patch.dict("os.environ", {"DEFAULT_LANGUAGE": "pt_BR"}):
+            import youtube
+            result_str = youtube.detect_language([], [], "http://dummy")
+            assert result_str == "^pt_BR.*"

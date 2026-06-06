@@ -210,8 +210,15 @@ def filter_vimeo_cookies(cookies_path_obj: Path) -> None:
 
         filtered_lines_list: List[str] = []
         for line_str in lines_list:
-            if line_str.startswith("#") or "vimeo.com" in line_str or "akamaized.net" in line_str:
+            if line_str.startswith("#"):
                 filtered_lines_list.append(line_str)
+                continue
+
+            parts = line_str.split("\t")
+            if len(parts) > 0:
+                domain = parts[0]
+                if domain.endswith(".vimeo.com") or domain == "vimeo.com" or domain.endswith(".akamaized.net") or domain == "akamaized.net":
+                    filtered_lines_list.append(line_str)
 
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:
             file_descriptor_obj.writelines(filtered_lines_list)
