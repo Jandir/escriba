@@ -82,7 +82,7 @@ import requests
 
 from collections import Counter
 
-VERSION = "2.6.4"
+VERSION = "2.6.7"
 
 _script_dir = Path(__file__).parent.resolve()
 
@@ -413,9 +413,17 @@ ORAL_MARKERS_ES = {
 @functools.lru_cache(maxsize=1)
 def _load_ml_deps():
     """
-    Importa as dependências de ML (pysrt, sklearn, nltk) uma única vez por processo.
-    O resultado é cacheado via @lru_cache, garantindo que o tempo de importação
-    pesado só ocorra no primeiro download ou na primeira re-geração de MD.
+    Importa as dependências de Machine Learning (pysrt, sklearn, nltk) de forma preguiçosa (Lazy Loading).
+    
+    Explicação para Iniciantes:
+    - Bibliotecas como scikit-learn e nltk demoram frações de segundo significativas para serem carregadas
+      pelo interpretador do Python. Se importássemos esses módulos globalmente no topo de escriba.py,
+      qualquer comando simples (ex: `escriba --version` ou `escriba --help`) sofreria um atraso chato para rodar.
+    - Solução: Usamos o padrão 'Lazy Loading' (Importação Tardia). Só importamos essas ferramentas grandes
+      no momento exato em que a conversão de SRT para MD é acionada.
+    - O `@functools.lru_cache(maxsize=1)` faz com que, após a primeira importação (que lê do disco),
+      os módulos permaneçam na memória RAM do processo. Nas chamadas seguintes, a função retorna a referência
+      da memória de forma instantânea.
     """
     try:
         import pysrt
@@ -713,7 +721,22 @@ def srt_to_md(
     srt_path: Path, video_id_str: str, video_title_str: str,
     video_date_str: str = "Desconhecida", threshold_float: float = 0.3, indentation_prefix_str: str = "  "
 ) -> Path | None:
-    """Converte .srt em .md estruturado com segmentação por tópicos (TF-IDF)."""
+    """
+    Converte legendas .srt em arquivos .md estruturados com segmentação semântica por tópicos (NLP/TF-IDF).
+    
+    Explicação para Iniciantes (O Processo de Segmentação de Tópicos):
+    Q: Como o programa sabe onde um assunto termina e outro começa sem de fato compreender o português?
+    A: Usamos algoritmos de Processamento de Linguagem Natural (NLP):
+       1. Janelas Adaptativas: Agrupamos os blocos de legenda em janelas de tempo baseadas na duração total do vídeo.
+       2. Vetorização TF-IDF (Term Frequency-Inverse Document Frequency): Convertemos cada janela em um vetor numérico
+          que representa a importância das palavras. Termos muito comuns no idioma (stopwords como "que", "de")
+          ou marcadores de fala ("né", "tipo") são ignorados. Termos raros e repetidos ganham peso alto.
+       3. Similaridade de Cosseno: Calculamos o ângulo geométrico entre o vetor da janela atual e o da janela anterior.
+          Se a similaridade de cosseno ficar abaixo de um limite (`threshold`), significa que o vocabulário mudou
+          de forma abrupta (indicando transição de assunto e gerando uma quebra de capítulo).
+       4. Indexação de Palavras-Chave: Usamos os termos de maior peso TF-IDF de cada capítulo para nomear
+          os tópicos de forma automática (ex: "Introdução", "código · python · compilador").
+    """
     init_res = _init_md_processing(srt_path, indentation_prefix_str)
     if not init_res: return None
     (pysrt, np, _, _, _, cosine_sim_func), subs_list = init_res
@@ -890,6 +913,8 @@ def _add_behavior_args(parser_obj: argparse.ArgumentParser) -> None:
     parser_obj.add_argument("--full-scan", action="store_true", help="Desativa o Smart Sync e força a listagem completa de todos os vídeos do canal")
     parser_obj.add_argument("--ignore-metadata", action="store_true", help="Pula a auto-recuperação de datas e títulos ausentes no histórico JSON")
     parser_obj.add_argument("--retry-nosub", action="store_true", help="Tenta baixar novamente as legendas de vídeos marcados como 'sem legenda'")
+    parser_obj.add_argument("-dv", "--download-video", action="store_true", help="Baixa o vídeo no formato Full HD (1080p, sem áudio)")
+
 
 
 def _add_utility_args(parser_obj: argparse.ArgumentParser) -> None:
@@ -1025,7 +1050,12 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
     script_dir_path, yt_dlp_cmd_list = youtube.setup_environment()
     
     latest_json_path = _auto_detect_channel(cwd_path, cli_args) if not cli_args.canal else None
-    url_str, _, _ = parse_input_type(cli_args.canal)
+    url_str, input_type, _ = parse_input_type(cli_args.canal)
+
+    if getattr(cli_args, "download_video", False) and input_type == "channel":
+        print_err("Download de vídeo original (-dv/--download-video) não é permitido para CANAL completo.")
+        print_err("Por favor, execute o download de vídeo apenas para um vídeo individual ou playlist.")
+        sys.exit(1)
 
     _print_session_info(cli_args, latest_json_path)
 
@@ -1418,7 +1448,10 @@ def _download_and_process_single(
     """Realiza o download e processamento pós-download de um vídeo único."""
     print_dl(f"{video_dict['video_id']}{RESET}  {DIM}legenda/{lang}{RESET}", prefix)
     provider_mod = _get_provider_module(conf.channel_url)
-    exit_code = provider_mod.download_video(conf.yt_dlp_cmd_list, cookies, video_dict["video_id"], lang, conf.channel_dir_name)
+    exit_code = provider_mod.download_video(
+        conf.yt_dlp_cmd_list, cookies, video_dict["video_id"], lang, conf.channel_dir_name,
+        download_video_only_hd=getattr(args, "download_video", False)
+    )
     
     _update_metadata_from_json(conf, video_dict, dirty)
 
@@ -1487,6 +1520,7 @@ def _register_subtitle_success(
         ))
     
     video_dict["subtitle_downloaded"] = True
+    video_dict["has_no_subtitle"] = False
     dirty_list[0] += 1
     flush_func()
     
@@ -1553,6 +1587,16 @@ def _run_deferred_md_conversion(pending_list: list[tuple], cli_args_ns: argparse
     try:
         if use_parallel_bool:
             finished_count_int = 0
+            # Explicação para Iniciantes (Concorrência com Threads):
+            # Q: Por que usamos ThreadPoolExecutor em vez de um loop 'for' convencional?
+            # A: O cálculo de TF-IDF e leitura/escrita de arquivos MD consome processamento e tempo.
+            #    Se processarmos sequencialmente, o usuário teria que esperar cada arquivo acabar.
+            #    Com o 'ThreadPoolExecutor', o Python cria uma piscina (pool) de trabalhadores (threads)
+            #    executando tarefas de forma simultânea (concorrente).
+            # - `executor.submit(_convert_task, item)` agenda a execução de uma tarefa e retorna um
+            #   objeto do tipo `Future` (uma promessa de resultado futuro).
+            # - `as_completed(futures_dict)` é um iterador que nos dá as tarefas conforme elas vão
+            #   terminando, não importando a ordem em que foram iniciadas, otimizando o fluxo.
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures_dict = {executor.submit(_convert_task, item): item[1] for item in pending_list}
                 for future_obj in as_completed(futures_dict):
@@ -1861,10 +1905,82 @@ def _print_upgrade_summary(counts_list: list[int], total_int: int) -> None:
 
 
 
+def _validate_direct_download_target(canal_arg_any: list | str | None) -> tuple[str, str]:
+    """Valida o alvo do download direto e retorna URL e tipo."""
+    if not canal_arg_any:
+        print_err("Por favor, especifique uma URL ou ID de vídeo/playlist para download de vídeo.")
+        sys.exit(1)
+        
+    url_str, input_type_str, _ = parse_input_type(str(canal_arg_any))
+    if input_type_str == "channel":
+        print_err("Download de vídeo original (-dv/--download-video) não é permitido para CANAL completo.")
+        print_err("Por favor, execute o download de vídeo apenas para um vídeo individual ou playlist.")
+        sys.exit(1)
+        
+    return url_str, input_type_str
+
+
+def _filter_cookies_if_present(cwd_path: Path, provider_str: str) -> None:
+    """Filtra cookies caso o arquivo exista, dependendo do provedor."""
+    cookies_txt_path = cwd_path / "cookies.txt"
+    if cookies_txt_path.is_file():
+        if provider_str == "vimeo":
+            filter_vimeo_cookies(cookies_txt_path)
+            print_info("Cookies filtrados limitados ao Vimeo.")
+        else:
+            filter_youtube_cookies(cookies_txt_path)
+            print_info("Cookies filtrados limitados ao YouTube.")
+
+
+def _build_yt_dlp_direct_cmd(url_str: str, yt_dlp_cmd_list: list[str], cookies_list: list[str]) -> list[str]:
+    """Gera a lista de argumentos yt-dlp para download de vídeo direto em HD sem áudio."""
+    return yt_dlp_cmd_list + cookies_list + [
+        "--ignore-no-formats-error",
+        "--restrict-filenames",
+        "-f", "bestvideo[height<=1080]",
+        "--remux-video", "mp4",
+        "-o", "%(title)s [%(id)s].%(ext)s",
+        url_str
+    ]
+
+
+def _execute_direct_download(cmd_list: list[str]) -> None:
+    """Executa o processo yt-dlp de download direto de vídeo."""
+    try:
+        process_result_obj = subprocess.run(cmd_list)
+        if process_result_obj.returncode != 0:
+            print_err(f"O download falhou com código de retorno {process_result_obj.returncode}.")
+            sys.exit(process_result_obj.returncode)
+    except Exception as error_obj:
+        print_err(f"Erro inesperado durante o download do vídeo: {error_obj}")
+        sys.exit(1)
+
+
+def _run_direct_video_download_flow(cli_args_ns: argparse.Namespace) -> None:
+    """Fluxo principal para download direto de vídeo MP4 HD sem áudio (-dv)."""
+    url_str, _ = _validate_direct_download_target(cli_args_ns.canal)
+    script_dir_path, yt_dlp_cmd_list = youtube.setup_environment()
+    provider_str = get_provider(url_str)
+    
+    cookies_list = configure_cookies(Path.cwd(), script_dir_path, cli_args_ns.refresh_cookies, silent_bool=False)
+    _filter_cookies_if_present(Path.cwd(), provider_str)
+    
+    print_info(f"Iniciando download de vídeo direto em Full HD...")
+    print_info(f"Destino: {url_str}")
+    
+    cmd_list = _build_yt_dlp_direct_cmd(url_str, yt_dlp_cmd_list, cookies_list)
+    _execute_direct_download(cmd_list)
+    print_ok("Download de vídeo direto concluído com sucesso!")
+
+
 def main() -> None:
     print_header(VERSION)
     cli_args_ns = parse_args()
     _normalize_canal_arg(cli_args_ns)
+
+    if getattr(cli_args_ns, "download_video", False):
+        _run_direct_video_download_flow(cli_args_ns)
+        return
 
     if _handle_cli_pre_flows(cli_args_ns):
         return

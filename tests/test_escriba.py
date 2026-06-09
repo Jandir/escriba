@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from escriba import clean_ekklezia_terms, _strip_rollup, create_adaptive_windows
 import pysrt
 import escriba
+import youtube
 
 # ─── Termos Ekklezia ─────────────────────────────────────────────────────────
 
@@ -90,8 +91,8 @@ def test_detect_language_ignores_invalid_tags():
         mock_result.stdout = "NA\nnone\nNA\npt\n"
         mock_run.return_value = mock_result
         
-        result_str = escriba.detect_language([], [], "http://dummy")
-        assert result_str == "^pt$"
+        result_str = youtube.detect_language([], [], "http://dummy")
+        assert result_str == "^pt.*"
 
 def test_detect_language_fallback():
     """Verifica o fallback para o idioma padrão quando nada é detectado."""
@@ -101,8 +102,8 @@ def test_detect_language_fallback():
         mock_run.return_value = mock_result
         
         with patch.dict("os.environ", {"DEFAULT_LANGUAGE": "pt_BR"}):
-            result_str = escriba.detect_language([], [], "http://dummy")
-            assert result_str == "^pt_BR$"
+            result_str = youtube.detect_language([], [], "http://dummy")
+            assert result_str == "^pt_BR.*"
 
 
 # ─── Parsing de Entradas ──────────────────────────────────────────────────────
@@ -177,6 +178,125 @@ def test_print_summary_basic(capsys):
     assert "5" in captured.out
     assert "3" in captured.out
     assert "8" in captured.out
+
+
+# ─── Validação de Download de Vídeo para Canais ───────────────────────────────
+
+@patch("youtube.setup_environment")
+@patch("escriba._print_session_info")
+def test_setup_session_download_video_channel(mock_print_info, mock_setup_env):
+    """Verifica se setup_session impede download de vídeo (-dv) para canais completos."""
+    mock_setup_env.return_value = (Path("/tmp"), ["yt-dlp"])
+    
+    import argparse
+    cli_args = argparse.Namespace(canal="@MeuCanal", download_video=True)
+    
+    with pytest.raises(SystemExit) as exc_info:
+        escriba.setup_session(cli_args)
+        
+    assert exc_info.value.code == 1
+
+
+@patch("youtube.setup_environment")
+@patch("escriba._print_session_info")
+@patch("escriba._resolve_uploader_id")
+@patch("escriba.get_provider")
+def test_setup_session_download_video_video(mock_provider, mock_uploader, mock_print_info, mock_setup_env):
+    """Verifica se setup_session permite download de vídeo (-dv) para vídeos individuais."""
+    mock_setup_env.return_value = (Path("/tmp"), ["yt-dlp"])
+    mock_uploader.return_value = "uploader_id"
+    mock_provider.return_value = "youtube"
+    
+    import argparse
+    cli_args = argparse.Namespace(canal="dQw4w9WgXcQ", download_video=True)
+    
+    config = escriba.setup_session(cli_args)
+    assert config.channel_input_url_or_handle == "dQw4w9WgXcQ"
+    assert config.provider == "youtube"
+
+
+@patch("youtube.setup_environment")
+@patch("escriba._print_session_info")
+@patch("escriba._resolve_uploader_id")
+@patch("escriba.get_provider")
+def test_setup_session_download_video_playlist(mock_provider, mock_uploader, mock_print_info, mock_setup_env):
+    """Verifica se setup_session permite download de vídeo (-dv) para playlists."""
+    mock_setup_env.return_value = (Path("/tmp"), ["yt-dlp"])
+    mock_uploader.return_value = "uploader_id"
+    mock_provider.return_value = "youtube"
+    
+    import argparse
+    cli_args = argparse.Namespace(canal="https://www.youtube.com/playlist?list=PLxxx123", download_video=True)
+    
+    config = escriba.setup_session(cli_args)
+    assert "playlist" in config.channel_url
+    assert config.provider == "youtube"
+
+
+# ─── Download Direto de Vídeo (-dv) ──────────────────────────────────────────
+
+def test_validate_direct_download_target_video():
+    """Valida se o alvo de download aceita URLs ou IDs de vídeo."""
+    url_str, input_type_str = escriba._validate_direct_download_target("dQw4w9WgXcQ")
+    assert input_type_str == "video"
+    assert url_str == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+    url_str, input_type_str = escriba._validate_direct_download_target("https://www.youtube.com/playlist?list=PLxxx123")
+    assert input_type_str == "playlist"
+    assert "playlist?list=" in url_str
+
+
+def test_validate_direct_download_target_channel_aborts():
+    """Valida se tentar baixar canal completo com -dv gera SystemExit(1)."""
+    with pytest.raises(SystemExit) as exc_info:
+        escriba._validate_direct_download_target("@MeuCanal")
+    assert exc_info.value.code == 1
+
+    with pytest.raises(SystemExit) as exc_info:
+        escriba._validate_direct_download_target(None)
+    assert exc_info.value.code == 1
+
+
+def test_build_yt_dlp_direct_cmd():
+    """Verifica se compila corretamente o comando do yt-dlp sem áudio e em MP4."""
+    url_str = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    base_cmd_list = ["/path/to/yt-dlp"]
+    cookies_list = ["--cookies", "/path/to/cookies.txt"]
+    
+    cmd_list = escriba._build_yt_dlp_direct_cmd(url_str, base_cmd_list, cookies_list)
+    
+    # Valida presença dos argumentos exigidos pelo design do download de vídeo
+    assert cmd_list[0] == "/path/to/yt-dlp"
+    assert "--cookies" in cmd_list
+    assert "--ignore-no-formats-error" in cmd_list
+    assert "--restrict-filenames" in cmd_list
+    assert "-f" in cmd_list
+    assert "bestvideo[height<=1080]" in cmd_list
+    assert "--remux-video" in cmd_list
+    assert "mp4" in cmd_list
+    assert "-o" in cmd_list
+    assert "%(title)s [%(id)s].%(ext)s" in cmd_list
+    assert cmd_list[-1] == url_str
+
+
+@patch("escriba.filter_youtube_cookies")
+@patch("pathlib.Path.is_file")
+def test_filter_cookies_if_present_youtube(mock_is_file, mock_filter_yt):
+    """Verifica se filtra cookies do YouTube quando o arquivo cookies.txt existe."""
+    mock_is_file.return_value = True
+    escriba._filter_cookies_if_present(Path("/dummy"), "youtube")
+    mock_filter_yt.assert_called_once_with(Path("/dummy/cookies.txt"))
+
+
+@patch("escriba.filter_vimeo_cookies")
+@patch("pathlib.Path.is_file")
+def test_filter_cookies_if_present_vimeo(mock_is_file, mock_filter_vimeo):
+    """Verifica se filtra cookies do Vimeo quando o arquivo cookies.txt existe."""
+    mock_is_file.return_value = True
+    escriba._filter_cookies_if_present(Path("/dummy"), "vimeo")
+    mock_filter_vimeo.assert_called_once_with(Path("/dummy/cookies.txt"))
+
+
 
 
 

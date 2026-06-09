@@ -150,6 +150,14 @@ def _extract_metadata_from_content(content_str: str) -> Dict[str, str]:
     """
     Tenta extrair metadados (Título, Data, ID) diretamente do conteúdo do arquivo.
     Suporta YAML Frontmatter e padrões comuns de Markdown do Escriba.
+    
+    Explicação para Iniciantes:
+    - O 'YAML Frontmatter' é um bloco de texto técnico delimitado por '---' que fica no topo do arquivo.
+      Ele serve para descrever metadados estruturados que sistemas automáticos conseguem ler facilmente.
+    - O padrão de regex `^---\n(.*?)\n---` com as flags `re.DOTALL` (faz o ponto '.' capturar também quebras
+      de linha) e `re.MULTILINE` (faz o '^' e '$' buscarem início e fim de linhas, e não apenas do arquivo inteiro)
+      isola esse cabeçalho YAML para que possamos extrair chaves específicas de lá.
+    - Se falhar, buscamos o título pelo H1 do Markdown (`# Título`) e a data por expressões regulares de busca simples.
     """
     meta_dict: Dict[str, str] = {}
     
@@ -450,7 +458,20 @@ def load_state(state_file_path_str: str) -> Dict[str, Any]:
         with open(state_file_path_str, 'r', encoding='utf-8') as file_descriptor_obj:
             data_dict_dict: Dict = json.load(file_descriptor_obj)
             # O Lexis guarda seus dados específicos na chave "lexis_state"
-            return data_dict_dict.get("lexis_state", _get_default_state())
+            state_dict: Dict[str, Any] = data_dict_dict.get("lexis_state", _get_default_state())
+            
+            # Sincroniza em memória a lista de IDs processados a partir dos vídeos do JSON
+            processed_ids_set: Set[str] = set(state_dict.get("processed_ids", []))
+            
+            videos_list: List[Dict[str, Any]] = data_dict_dict.get("videos", [])
+            for video_dict in videos_list:
+                video_id_str: Optional[str] = video_dict.get("video_id") or video_dict.get("id")
+                if video_id_str:
+                    if video_dict.get("consolidated_notebooklm") or video_dict.get("consolidated"):
+                        processed_ids_set.add(video_id_str)
+            
+            state_dict["processed_ids"] = sorted(list(processed_ids_set))
+            return state_dict
     except Exception:
         # Se o arquivo estiver corrompido, começamos do zero por segurança
         return _get_default_state()
@@ -485,8 +506,34 @@ def save_state(state_file_path_str: str, state_dict: Dict[str, Any]) -> None:
         except Exception:
             pass
     
-    # 2. Atualizamos apenas a "caixinha" do Lexis
-    data_dict_dict["lexis_state"] = state_dict
+    # 2. Atualizamos os flags nos vídeos individuais e omitimos o campo redundante do "lexis_state"
+    videos_list: List[Dict[str, Any]] = data_dict_dict.setdefault("videos", [])
+    
+    # Mapeia os IDs existentes para seus dicionários para acesso O(1)
+    video_map_dict: Dict[str, Dict[str, Any]] = {}
+    for video_dict in videos_list:
+        v_id_str: Optional[str] = video_dict.get("video_id") or video_dict.get("id")
+        if v_id_str:
+            video_map_dict[v_id_str] = video_dict
+            
+    # Define a flag para cada ID processado
+    for vid_id_str in state_dict.get("processed_ids", []):
+        if vid_id_str in video_map_dict:
+            video_map_dict[vid_id_str]["consolidated_notebooklm"] = True
+        else:
+            new_video_dict: Dict[str, Any] = {
+                "video_id": vid_id_str,
+                "consolidated_notebooklm": True
+            }
+            videos_list.append(new_video_dict)
+            video_map_dict[vid_id_str] = new_video_dict
+            
+    # Copia o estado e remove processed_ids para não salvar no JSON
+    state_dict_to_save: Dict[str, Any] = state_dict.copy()
+    if "processed_ids" in state_dict_to_save:
+        del state_dict_to_save["processed_ids"]
+        
+    data_dict_dict["lexis_state"] = state_dict_to_save
     
     with open(state_file_path_str, 'w', encoding='utf-8') as file_descriptor_obj:
         json.dump(data_dict_dict, file_descriptor_obj, ensure_ascii=False, indent=2)
@@ -787,8 +834,22 @@ def _clear_lexis_state(state_path_str: str) -> None:
     try:
         with open(state_path_str, 'r', encoding='utf-8') as file_descriptor_obj:
             data_dict_dict: Dict = json.load(file_descriptor_obj)
+            
+        has_changed_bool: bool = False
         if "lexis_state" in data_dict_dict:
             del data_dict_dict["lexis_state"]
+            has_changed_bool = True
+            
+        if "videos" in data_dict_dict:
+            for video_dict in data_dict_dict["videos"]:
+                if "consolidated_notebooklm" in video_dict:
+                    del video_dict["consolidated_notebooklm"]
+                    has_changed_bool = True
+                if "consolidated" in video_dict:
+                    del video_dict["consolidated"]
+                    has_changed_bool = True
+                    
+        if has_changed_bool:
             with open(state_path_str, 'w', encoding='utf-8') as file_descriptor_obj:
                 json.dump(data_dict_dict, file_descriptor_obj, ensure_ascii=False, indent=2)
     except Exception:
@@ -874,7 +935,18 @@ def _select_files_to_process(channel_path_str: str, all_files_list: List[str], p
 
 
 def _group_files_by_id(channel_path_str: str, files_list: List[str]) -> Dict[str, List[str]]:
-    """Agrupa diferentes extensões (.srt, .txt, .md) pelo mesmo ID de vídeo."""
+    """
+    Agrupa diferentes extensões (.srt, .txt, .md) pelo mesmo ID de vídeo.
+    
+    Explicação para Iniciantes (Agrupamento por Chave / Bucketing):
+    - Um mesmo vídeo do YouTube/Vimeo pode ter vários arquivos locais associados a ele no disco
+      (ex: "canal-XYZ.srt", "canal-XYZ.txt", "canal-XYZ.md").
+      Não queremos juntar as três versões no mesmo volume consolidado, pois isso duplicaria o texto!
+    - Esta função cria um dicionário (`id_map_dict`) chaveado pelo ID de vídeo (ex: "XYZ") em que
+      o valor é uma lista de nomes de arquivos físicos.
+      Dessa forma, conseguimos analisar todas as versões disponíveis de um mesmo vídeo em grupo
+      e escolher apenas a melhor (ex: priorizar .md, descartando .srt e .txt redundantes).
+    """
     id_map_dict: Dict[str, List[str]] = {}
     for f_str in files_list:
         meta_dict: Dict[str, str] = get_metadata(os.path.join(channel_path_str, f_str))
