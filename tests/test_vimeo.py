@@ -6,7 +6,33 @@ from unittest.mock import patch, MagicMock
 # Adiciona diretório pai no path para facilitar import local
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from vimeo import download_video
+from vimeo import download_video, filter_vimeo_cookies
+
+def test_filter_vimeo_cookies_logic(tmp_path: Path):
+    """Verifica se a filtragem de cookies remove domínios não autorizados e mantém os do Vimeo/Akamai."""
+    cookies_file_path: Path = tmp_path / "cookies.txt"
+    content_str: str = (
+        "# Netscape HTTP Cookie File\n"
+        ".vimeo.com\tTRUE\t/\tFALSE\t0\tvuid\tvalue1\n"
+        ".akamaized.net\tTRUE\t/\tFALSE\t0\tcdn\tvalue2\n"
+        ".other.com\tTRUE\t/\tFALSE\t0\tID\tvalue3\n"
+        ".malicious.com\tTRUE\t/\tFALSE\t0\tID\txyz_vimeo.com_fake\n"
+        "fakevimeo.com\tTRUE\t/\tFALSE\t0\tID\tvalue5\n"
+        "#HttpOnly_.other.com\tTRUE\t/\tTRUE\t0\tSESSION\tsecret123\n"
+        "#HttpOnly_.vimeo.com\tTRUE\t/\tTRUE\t0\tSECURE_SID\tvimeo_secret\n"
+    )
+    cookies_file_path.write_text(content_str, encoding="utf-8")
+
+    filter_vimeo_cookies(cookies_file_path)
+
+    result_str: str = cookies_file_path.read_text(encoding="utf-8")
+    assert ".vimeo.com\tTRUE\t/\tFALSE" in result_str
+    assert ".akamaized.net" in result_str
+    assert "other.com" not in result_str
+    assert "malicious.com" not in result_str
+    assert "fakevimeo.com" not in result_str
+    assert "#HttpOnly_.vimeo.com" in result_str
+    assert "# Netscape" in result_str
 
 def test_download_video_command_construction_vimeo():
     """Verifica se o comando yt-dlp é construído corretamente com e sem a flag download_video_only_hd no Vimeo."""
