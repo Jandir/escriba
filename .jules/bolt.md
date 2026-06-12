@@ -1,0 +1,3 @@
+## 2023-10-27 - Object Creation Overhead in Hot Paths
+**Learning:** Instantiating `Path` objects (e.g. `Path(filepath).name`) purely for string manipulation in frequently called functions like `extract_video_id` adds significant measurable overhead. Compiling regexes dynamically per function call instead of pre-compiling them at module load also degrades performance severely.
+**Action:** Always pre-compile regexes at the module level using `re.compile()`. Use fast built-in string methods like `.rsplit()` to extract filenames in hot loops rather than instantiating rich objects like `Pathlib.Path` unless path traversal/checking features are actually needed.
