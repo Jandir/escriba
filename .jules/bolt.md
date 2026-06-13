@@ -1,0 +1,3 @@
+## 2025-02-20 - Regex Negative Lookahead Performance Bottleneck
+**Learning:** Using per-character negative lookaheads like `(?:(?!\n\n).)*?` inside `re.compile()` in Python creates an $O(N)$ operation at every character step, causing severe performance degradation when processing large blocks of text (like concatenated subtitle SRTs).
+**Action:** Replace per-character negative lookaheads with a non-greedy wildcard `(.*?)` followed by a positive boundary lookahead `(?=\n\n|$)` to achieve the exact same bounding logic while utilizing the C-optimized fast path of Python's regex engine. Always evaluate if a negative lookahead inside a wildcard capture is actually redundant.
