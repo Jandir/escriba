@@ -67,8 +67,11 @@ def clean_srt_content(subtitle_content_str: str) -> str:
     
     # Esta Expressão Regular (Regex) busca o padrão: número, tempo, texto e espaço vazio.
     # Se você é novo em Regex: estamos capturando apenas o 'grupo 4', que é o texto.
+    # Otimização Bolt: Usando (.*?) ao invés de (?:(?!\n\n).)*? aumenta muito a
+    # velocidade pois evita a validação de lookahead negativo para cada caractere.
+    # O regex para no ponto correto graças ao lookahead positivo final (?=\n\n|$).
     block_pattern_obj: Pattern = re.compile(
-        r'(\d+)\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n((?:(?!\n\n).)*?)(?=\n\n|$)', 
+        r'(\d+)\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.*?)(?=\n\n|$)',
         re.DOTALL
     )
     
