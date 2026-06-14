@@ -26,3 +26,4 @@ scratch/normalize_tags.py
 tests/test_escriba.py
 test_discovery.py
 tests/test_escriba.py
+.venv
