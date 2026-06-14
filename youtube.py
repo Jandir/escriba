@@ -388,130 +388,37 @@ def download_video(
     output_template_str: str = f"{folder_name_str}-{video_id_str}"
     url = f"https://www.youtube.com/watch?v={video_id_str}"
     
-    base_args = yt_dlp_cmd_list[3:] + cookie_args_list + [
-        "--ignore-no-formats-error",
-        "--write-info-json",
-        "--restrict-filenames",
-    ]
-    
     download_args = ["-f", "bestvideo[height<=1080]"] if download_video_only_hd else ["--skip-download"]
-    base_args.extend(download_args)
     
-    base_args.extend([
-        "--write-sub",
-        "--write-auto-sub",
-        "--convert-subs", "srt",
-        "--no-warnings",
-        "--sub-langs", _normalize_lang_pattern(lang_filter_str),
-        "-o", output_template_str,
-        url
-    ])
+    lang_pattern = _normalize_lang_pattern(lang_filter_str)
+    lang_regex = re.compile(lang_pattern, re.IGNORECASE)
     
-    try:
-        # Traduz a lista de comandos CLI em um dicionário estruturado compatível com a API Python do yt-dlp
-        parsed_opts = yt_dlp.parse_options(base_args)[3]
+    current_cookies = list(cookie_args_list)
+    
+    while True:
+        base_args = yt_dlp_cmd_list[3:] + current_cookies + [
+            "--ignore-no-formats-error",
+            "--write-info-json",
+            "--restrict-filenames",
+        ]
+        base_args.extend(download_args)
+        base_args.extend([
+            "--write-sub",
+            "--write-auto-sub",
+            "--convert-subs", "srt",
+            "--no-warnings",
+            "--sub-langs", lang_pattern,
+            "-o", output_template_str,
+            url
+        ])
         
-        # Cria cópia de opções apenas para extração de metadados iniciais
-        extract_opts = dict(parsed_opts)
-        extract_opts.update({
-            'skip_download': True,
-            'quiet': True,
-            'no_warnings': True,
-            'writesubtitles': True,
-            'writeautomaticsub': True,
-        })
-        
-        with yt_dlp.YoutubeDL(extract_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-        subtitles = info.get('subtitles') or {}
-        auto_captions = info.get('automatic_captions') or {}
-        
-        lang_pattern = _normalize_lang_pattern(lang_filter_str)
-        lang_regex = re.compile(lang_pattern, re.IGNORECASE)
-        
-        chosen_lang = None
-        is_auto = False
-        
-        # Prioridade 1: Buscar legenda manual (humana) que case com o idioma procurado
-        for lang_code in subtitles.keys():
-            if lang_regex.match(lang_code):
-                chosen_lang = lang_code
-                is_auto = False
-                break
-                
-        # Prioridade 2: Buscar legenda automática (IA) como plano de fundo
-        if not chosen_lang:
-            for lang_code in auto_captions.keys():
-                if lang_regex.match(lang_code):
-                    chosen_lang = lang_code
-                    is_auto = True
-                    break
-                    
-        # Modifica as opções de download para restringir apenas ao idioma selecionado
-        download_opts = dict(parsed_opts)
-        
-        if chosen_lang:
-            download_opts.update({
-                'writesubtitles': not is_auto,
-                'writeautomaticsub': is_auto,
-                'subtitleslangs': [chosen_lang],
-            })
-            
-            source_dict = auto_captions if is_auto else subtitles
-            formats = source_dict.get(chosen_lang, [])
-            if formats:
-                selected_format = next((f for f in formats if f.get('ext') == 'vtt'), formats[0])
-                info['requested_subtitles'] = {
-                    chosen_lang: {
-                        'ext': selected_format.get('ext'),
-                        'data': selected_format.get('data'),
-                        'url': selected_format.get('url'),
-                    }
-                }
-            else:
-                info['requested_subtitles'] = {}
-        else:
-            # Se não encontrou nenhuma legenda válida para o idioma, desativa os downloads de subs
-            download_opts.update({
-                'writesubtitles': False,
-                'writeautomaticsub': False,
-                'subtitleslangs': [],
-            })
-            info['requested_subtitles'] = {}
-            
-        # Executa o download real em memória
-        with yt_dlp.YoutubeDL(download_opts) as ydl_dl:
-            ydl_dl.process_info(info)
-            
-        return 0
-    except Exception as error_obj:
-        # Se ocorrer falha no download (ex: cookie expirado no meio da sessão),
-        # tentamos limpar e rodar de novo
-        print_warn(f"Erro ao baixar vídeo {video_id_str}: {error_obj}. Tentando renovar cookies do navegador...")
         try:
-            new_cookies_args_list: List[str] = _refresh_cookies_on_error(
-                Path.cwd(), Path(__file__).parent.resolve()
-            )
+            # Traduz a lista de comandos CLI em um dicionário estruturado compatível com a API Python do yt-dlp
+            parsed_opts = yt_dlp.parse_options(base_args)[3]
             
-            # Reconstrói a chamada completa para nova tentativa
-            base_args_retry = yt_dlp_cmd_list[3:] + new_cookies_args_list + [
-                "--ignore-no-formats-error",
-                "--write-info-json",
-                "--restrict-filenames",
-            ] + download_args + [
-                "--write-sub",
-                "--write-auto-sub",
-                "--convert-subs", "srt",
-                "--no-warnings",
-                "--sub-langs", _normalize_lang_pattern(lang_filter_str),
-                "-o", output_template_str,
-                url
-            ]
-            
-            parsed_opts_retry = yt_dlp.parse_options(base_args_retry)[3]
-            extract_opts_retry = dict(parsed_opts_retry)
-            extract_opts_retry.update({
+            # Cria cópia de opções apenas para extração de metadados iniciais
+            extract_opts = dict(parsed_opts)
+            extract_opts.update({
                 'skip_download': True,
                 'quiet': True,
                 'no_warnings': True,
@@ -519,7 +426,7 @@ def download_video(
                 'writeautomaticsub': True,
             })
             
-            with yt_dlp.YoutubeDL(extract_opts_retry) as ydl:
+            with yt_dlp.YoutubeDL(extract_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
             subtitles = info.get('subtitles') or {}
@@ -527,11 +434,15 @@ def download_video(
             
             chosen_lang = None
             is_auto = False
+            
+            # Prioridade 1: Buscar legenda manual (humana) que case com o idioma procurado
             for lang_code in subtitles.keys():
                 if lang_regex.match(lang_code):
                     chosen_lang = lang_code
                     is_auto = False
                     break
+                    
+            # Prioridade 2: Buscar legenda automática (IA) como plano de fundo
             if not chosen_lang:
                 for lang_code in auto_captions.keys():
                     if lang_regex.match(lang_code):
@@ -539,13 +450,16 @@ def download_video(
                         is_auto = True
                         break
                         
-            download_opts_retry = dict(parsed_opts_retry)
+            # Modifica as opções de download para restringir apenas ao idioma selecionado
+            download_opts = dict(parsed_opts)
+            
             if chosen_lang:
-                download_opts_retry.update({
+                download_opts.update({
                     'writesubtitles': not is_auto,
                     'writeautomaticsub': is_auto,
                     'subtitleslangs': [chosen_lang],
                 })
+                
                 source_dict = auto_captions if is_auto else subtitles
                 formats = source_dict.get(chosen_lang, [])
                 if formats:
@@ -560,19 +474,162 @@ def download_video(
                 else:
                     info['requested_subtitles'] = {}
             else:
-                download_opts_retry.update({
+                # Se não encontrou nenhuma legenda válida para o idioma, desativa os downloads de subs
+                download_opts.update({
                     'writesubtitles': False,
                     'writeautomaticsub': False,
                     'subtitleslangs': [],
                 })
                 info['requested_subtitles'] = {}
                 
-            with yt_dlp.YoutubeDL(download_opts_retry) as ydl_dl:
+            # Executa o download real em memória
+            with yt_dlp.YoutubeDL(download_opts) as ydl_dl:
                 ydl_dl.process_info(info)
+                
             return 0
-        except Exception as retry_error:
-            print_err(f"Erro crítico após renovar cookies no vídeo {video_id_str}: {retry_error}")
-            return 1
+        except Exception as error_obj:
+            error_str = str(error_obj)
+            is_429 = "429" in error_str or "too many requests" in error_str.lower()
+            
+            if is_429:
+                print_warn(f"\n⚠ [HTTP 429] Limite de requisições excedido no vídeo {video_id_str}.")
+                print_warn("O YouTube bloqueou temporariamente este IP ou sessão (Too Many Requests).")
+                print_warn("Por favor, realize os seguintes passos para liberação:")
+                print_warn("  1. Abra o YouTube no navegador Google Chrome desta máquina.")
+                print_warn("  2. Reproduza qualquer vídeo para verificar/resolver CAPTCHAs.")
+                print_warn("  3. Caso o IP esteja bloqueado, altere a VPN ou mude sua conexão.")
+                print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
+                try:
+                    user_input = input().strip().lower()
+                except (KeyboardInterrupt, EOFError):
+                    print_err("\nProcesso interrompido pelo usuário.")
+                    raise KeyboardInterrupt
+                
+                if user_input == "p":
+                    print_warn(f"Vídeo {video_id_str} pulado pelo usuário devido a limite de requisições.")
+                    return 1
+                
+                # Tenta renovar cookies e reinicia o loop
+                try:
+                    current_cookies = _refresh_cookies_on_error(
+                        Path.cwd(), Path(__file__).parent.resolve()
+                    )
+                except Exception as e:
+                    print_warn(f"Erro ao renovar cookies: {e}")
+                continue
+            
+            # Se não for 429, tenta o fluxo de auto-healing padrão com cookies uma vez
+            print_warn(f"Erro ao baixar vídeo {video_id_str}: {error_obj}. Tentando renovar cookies do navegador...")
+            try:
+                new_cookies_args_list: List[str] = _refresh_cookies_on_error(
+                    Path.cwd(), Path(__file__).parent.resolve()
+                )
+                
+                # Reconstrói a chamada completa para nova tentativa
+                base_args_retry = yt_dlp_cmd_list[3:] + new_cookies_args_list + [
+                    "--ignore-no-formats-error",
+                    "--write-info-json",
+                    "--restrict-filenames",
+                ] + download_args + [
+                    "--write-sub",
+                    "--write-auto-sub",
+                    "--convert-subs", "srt",
+                    "--no-warnings",
+                    "--sub-langs", lang_pattern,
+                    "-o", output_template_str,
+                    url
+                ]
+                
+                parsed_opts_retry = yt_dlp.parse_options(base_args_retry)[3]
+                extract_opts_retry = dict(parsed_opts_retry)
+                extract_opts_retry.update({
+                    'skip_download': True,
+                    'quiet': True,
+                    'no_warnings': True,
+                    'writesubtitles': True,
+                    'writeautomaticsub': True,
+                })
+                
+                with yt_dlp.YoutubeDL(extract_opts_retry) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    
+                subtitles = info.get('subtitles') or {}
+                auto_captions = info.get('automatic_captions') or {}
+                
+                chosen_lang = None
+                is_auto = False
+                for lang_code in subtitles.keys():
+                    if lang_regex.match(lang_code):
+                        chosen_lang = lang_code
+                        is_auto = False
+                        break
+                if not chosen_lang:
+                    for lang_code in auto_captions.keys():
+                        if lang_regex.match(lang_code):
+                            chosen_lang = lang_code
+                            is_auto = True
+                            break
+                            
+                download_opts_retry = dict(parsed_opts_retry)
+                if chosen_lang:
+                    download_opts_retry.update({
+                        'writesubtitles': not is_auto,
+                        'writeautomaticsub': is_auto,
+                        'subtitleslangs': [chosen_lang],
+                    })
+                    source_dict = auto_captions if is_auto else subtitles
+                    formats = source_dict.get(chosen_lang, [])
+                    if formats:
+                        selected_format = next((f for f in formats if f.get('ext') == 'vtt'), formats[0])
+                        info['requested_subtitles'] = {
+                            chosen_lang: {
+                                'ext': selected_format.get('ext'),
+                                'data': selected_format.get('data'),
+                                'url': selected_format.get('url'),
+                            }
+                        }
+                    else:
+                        info['requested_subtitles'] = {}
+                else:
+                    download_opts_retry.update({
+                        'writesubtitles': False,
+                        'writeautomaticsub': False,
+                        'subtitleslangs': [],
+                    })
+                    info['requested_subtitles'] = {}
+                    
+                with yt_dlp.YoutubeDL(download_opts_retry) as ydl_dl:
+                    ydl_dl.process_info(info)
+                return 0
+            except Exception as retry_error:
+                retry_str = str(retry_error)
+                if "429" in retry_str or "too many requests" in retry_str.lower():
+                    print_warn(f"\n⚠ [HTTP 429] Limite de requisições excedido no vídeo {video_id_str} após tentativa de correção automática.")
+                    print_warn("Por favor, realize os seguintes passos para liberação:")
+                    print_warn("  1. Abra o YouTube no navegador Google Chrome desta máquina.")
+                    print_warn("  2. Reproduza qualquer vídeo para verificar/resolver CAPTCHAs.")
+                    print_warn("  3. Caso o IP esteja bloqueado, altere a VPN ou mude sua conexão.")
+                    print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
+                    try:
+                        user_input = input().strip().lower()
+                    except (KeyboardInterrupt, EOFError):
+                        print_err("\nProcesso interrompido pelo usuário.")
+                        raise KeyboardInterrupt
+                    
+                    if user_input == "p":
+                        print_warn(f"Vídeo {video_id_str} pulado pelo usuário devido a limite de requisições.")
+                        return 1
+                    
+                    try:
+                        current_cookies = _refresh_cookies_on_error(
+                            Path.cwd(), Path(__file__).parent.resolve()
+                        )
+                    except Exception as e:
+                        print_warn(f"Erro ao renovar cookies: {e}")
+                    continue
+                
+                print_err(f"Erro crítico após renovar cookies no vídeo {video_id_str}: {retry_error}")
+                return 1
 
 
 def filter_youtube_cookies(cookies_path_obj: Path) -> None:

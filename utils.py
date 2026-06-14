@@ -175,7 +175,10 @@ def extract_video_id(filename_or_path: str) -> str:
     else:
         name = re.sub(r'\.(srt|md|txt|json|vtt)$', '', name, flags=re.IGNORECASE)
         
-    # 2. Remove sufixos de idioma como '.pt-br', '.en', '-en'
+    # 2. Remove o sufixo '-orig' se presente no final (comum em arquivos markdown processados)
+    name = re.sub(r'-orig$', '', name, flags=re.IGNORECASE)
+        
+    # 3. Remove sufixos de idioma como '.pt-br', '.en', '-en'
     # O regex `[.\-][a-z]{2}(?:-[a-z]{2,3})?$` procura um traço ou ponto, seguido de duas letras,
     # opcionalmente seguido de outro traço e mais 2 ou 3 letras, ancorado no final da string ($).
     name = re.sub(r'[.\-][a-z]{2}(?:-[a-z]{2,3})?$', '', name, flags=re.IGNORECASE)
