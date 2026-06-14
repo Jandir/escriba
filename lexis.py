@@ -65,17 +65,29 @@ def clean_srt_content(subtitle_content_str: str) -> str:
     # Padroniza quebras de linha para evitar problemas entre Windows e Linux
     normalized_content_str: str = subtitle_content_str.replace('\r\n', '\n')
     
-    # Esta Expressão Regular (Regex) busca o padrão: número, tempo, texto e espaço vazio.
-    # Se você é novo em Regex: estamos capturando apenas o 'grupo 4', que é o texto.
-    block_pattern_obj: Pattern = re.compile(
-        r'(\d+)\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n((?:(?!\n\n).)*?)(?=\n\n|$)', 
-        re.DOTALL
-    )
-    
+    # BOLT OPTIMIZATION:
+    # Parsing using an iterative list lookup is significantly faster (and safer against formatting inconsistencies)
+    # than using a compiled regex with finditer for the entire large text string.
     subtitle_blocks_list: List[List[str]] = []
-    for match_obj in block_pattern_obj.finditer(normalized_content_str):
-        # O grupo(4) contém o texto puro da legenda naquele segundo específico.
-        _process_subtitle_block(match_obj.group(4).strip(), subtitle_blocks_list)
+
+    lines = normalized_content_str.split('\n')
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
+
+        if line.isdigit() and i + 1 < len(lines) and '-->' in lines[i+1]:
+            i += 2
+            text_lines = []
+            while i < len(lines) and lines[i].strip():
+                text_lines.append(lines[i])
+                i += 1
+            if text_lines:
+                _process_subtitle_block('\n'.join(text_lines).strip(), subtitle_blocks_list)
+        else:
+            i += 1
 
     # Junta todas as linhas processadas com um espaço simples entre elas.
     cleaned_lines_list: List[str] = []
