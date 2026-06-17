@@ -1,8 +1,17 @@
+import os
 import sys
 import time
 import re
 from pathlib import Path
 from typing import Optional, List, Dict
+
+# Pre-compiled regular expressions for performance
+_RE_EXT_CLEANUP = re.compile(r'\.(srt|md|txt|json|vtt)$', flags=re.IGNORECASE)
+_RE_ORIG_SUFFIX = re.compile(r'-orig$', flags=re.IGNORECASE)
+_RE_LANG_SUFFIX = re.compile(r'[.\-][a-z]{2}(?:-[a-z]{2,3})?$', flags=re.IGNORECASE)
+_RE_YT_ID_EXACT = re.compile(r'^[A-Za-z0-9_-]{11}$')
+_RE_YT_ID_SEARCH = re.compile(r'([A-Za-z0-9_-]{11})')
+_RE_YT_ID_BOUND = re.compile(r'[A-Za-z0-9_-]')
 
 # ─── Paleta ANSI (Explicação para Iniciantes) ──────────────────────────────────
 # Códigos ANSI são sequências especiais de caracteres não imprimíveis que o Terminal
@@ -167,37 +176,37 @@ def extract_video_id(filename_or_path: str) -> str:
     5. Se falhar, fazemos um fallback rodando uma varredura geral por trás em busca de qualquer
        sequência alfanumérica de 11 dígitos, pegando a que estiver mais próxima da ponta direita.
     """
-    name: str = str(Path(filename_or_path).name)
+    name: str = os.path.basename(filename_or_path)
     
     # 1. Remove as extensões de arquivo sem se importar com maiúsculas/minúsculas
     if name.lower().endswith(".info.json"):
         name = name[:-10]
     else:
-        name = re.sub(r'\.(srt|md|txt|json|vtt)$', '', name, flags=re.IGNORECASE)
+        name = _RE_EXT_CLEANUP.sub('', name)
         
     # 2. Remove o sufixo '-orig' se presente no final (comum em arquivos markdown processados)
-    name = re.sub(r'-orig$', '', name, flags=re.IGNORECASE)
+    name = _RE_ORIG_SUFFIX.sub('', name)
         
     # 3. Remove sufixos de idioma como '.pt-br', '.en', '-en'
     # O regex `[.\-][a-z]{2}(?:-[a-z]{2,3})?$` procura um traço ou ponto, seguido de duas letras,
     # opcionalmente seguido de outro traço e mais 2 ou 3 letras, ancorado no final da string ($).
-    name = re.sub(r'[.\-][a-z]{2}(?:-[a-z]{2,3})?$', '', name, flags=re.IGNORECASE)
+    name = _RE_LANG_SUFFIX.sub('', name)
     
     # 3. Verifica se o final do nome restante é um ID legítimo do YouTube (11 caracteres de padrão fixo)
     if len(name) >= 11:
         candidate: str = name[-11:]
-        if re.match(r'^[A-Za-z0-9_-]{11}$', candidate):
+        if _RE_YT_ID_EXACT.match(candidate):
             return candidate
             
     # 4. Caso não esteja na ponta (Vimeo ou nomes alterados), varremos toda a string por grupos de 11 caracteres.
-    matches: List[str] = re.findall(r'([A-Za-z0-9_-]{11})', name)
+    matches: List[str] = _RE_YT_ID_SEARCH.findall(name)
     if matches:
         # Percorremos a lista ao contrário para priorizar o ID mais próximo do fim do arquivo
         for m in reversed(matches):
             pos: int = name.rfind(m)
             # Uma medida extra de segurança: o ID legítimo não pode ter letras ou números grudados a ele,
             # pois isso indicaria que ele faz parte de uma palavra maior (como o próprio nome do canal).
-            if pos + 11 == len(name) or not re.match(r'[A-Za-z0-9_-]', name[pos+11]):
+            if pos + 11 == len(name) or not _RE_YT_ID_BOUND.match(name[pos+11]):
                 return m
         return matches[-1]
 
