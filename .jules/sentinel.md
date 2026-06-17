@@ -1,0 +1,4 @@
+## 2025-02-28 - [Cross-domain Cookie Leakage Prevention in Filter]
+**Vulnerability:** Cookie filtering used a broad substring search (`"youtube.com" in line_str`). This could result in malicious cookies matching the filter and exposing them because the string could be present anywhere in the cookie entry (e.g. within another domain, path, or value).
+**Learning:** Using substring searches for cookie validation in Netscape HTTP Cookie file formats is insufficient because parts of the file structure can contain arbitrary user-controlled strings, leading to potential cross-domain leakage.
+**Prevention:** Strictly split the Netscape HTTP cookie format by tabs (`\t`) and validate specifically on the domain field matching the exact target string (or accurately verifying subdomains with `.endswith()`).
