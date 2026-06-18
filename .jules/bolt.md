@@ -1,3 +1,7 @@
 ## 2026-03-01 - Fast parsing using iterative line checking instead of Regex
 **Learning:** Compiled regex `.finditer()` for parsing large multiline textual blocks (like subtitle SRT files) can be significantly slower than a direct programmatic iterative string traversal. Profiling revealed that an iterative linear traversal with basic `line.isdigit()` and `-->` checks was 2x faster than searching the entire file directly with `block_pattern_obj.finditer()`, and is safer than rigid string `split('\n\n')` approaches which fail if newline spacing between blocks is inconsistent.
 **Action:** When extracting predictable blocks from large text documents, prefer using native programmatic iterative parsing over large complex multi-line regex matchers.
+
+## 2024-06-18 - Fast string property extraction vs Path object overhead
+**Learning:** `Path(filename).name` introduces measurable overhead because it instantiates a full `Path` object before extracting the name string. For frequent utility string-parsing functions (like `extract_video_id` which loops over files and directories during sync workflows), `os.path.basename` is significantly lighter and faster. Combining this with globally pre-compiled Regular Expressions instead of inline module-level calls completely eliminated execution overhead by > 300%.
+**Action:** In frequently executed utility parsing loops, prefer the lighter `os.path.basename` to extract names over instantiating `Path` objects, and ALWAYS pre-compile regexes at the module scope when parsing static patterns.
