@@ -21,15 +21,22 @@ def test_filter_youtube_cookies_logic(tmp_path: Path):
         ".youtube.com\tTRUE\t/\tFALSE\t0\tSID\tvalue1\n"
         ".google.com\tTRUE\t/\tFALSE\t0\tGAIA\tvalue2\n"
         ".other.com\tTRUE\t/\tFALSE\t0\tID\tvalue3\n"
+        "evilyoutube.com\tTRUE\t/\tFALSE\t0\tSID\tvalue4\n"
+        ".somebank.com\tTRUE\t/\tFALSE\t0\tID\tyoutube.com\n"
+        "#HttpOnly_evilyoutube.com\tTRUE\t/\tFALSE\t0\tSID\tvalue5\n"
+        "#HttpOnly_.youtube.com\tTRUE\t/\tFALSE\t0\tSID\tvalue6\n"
     )
     cookies_file_path.write_text(content_str, encoding="utf-8")
     
     filter_youtube_cookies(cookies_file_path)
     
     result_str: str = cookies_file_path.read_text(encoding="utf-8")
-    assert "youtube.com" in result_str
-    assert "google.com" in result_str
+    assert ".youtube.com\tTRUE\t/\tFALSE\t0\tSID\tvalue1\n" in result_str
+    assert ".google.com\tTRUE\t/\tFALSE\t0\tGAIA\tvalue2\n" in result_str
+    assert "#HttpOnly_.youtube.com\tTRUE\t/\tFALSE\t0\tSID\tvalue6\n" in result_str
     assert "other.com" not in result_str
+    assert "evilyoutube.com" not in result_str
+    assert "somebank.com" not in result_str
     assert "# Netscape" in result_str
 
 def test_filter_youtube_cookies_missing_file():
