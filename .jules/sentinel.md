@@ -1,0 +1,4 @@
+## 2024-05-18 - Cross-domain cookie leakage via loose substring match
+**Vulnerability:** Cookie parsing logic (`filter_youtube_cookies` and `filter_vimeo_cookies`) used `if "youtube.com" in line:` to determine which cookies to keep. This meant any domain containing `"youtube.com"` (e.g. `evilyoutube.com`) or any unrelated domain storing a cookie *value* containing `"youtube.com"` (e.g. `id="youtube.com"`) would be leaked and sent to yt-dlp.
+**Learning:** Never parse formatted structured files (like Netscape HTTP Cookie File) with broad substring searches. Always split by the specific delimiter (tab `\t`) and validate against the specific columns to prevent leaking credentials to potentially attacker-controlled domains.
+**Prevention:** When parsing cookies, split by `\t`, index the domain column (`parts[0]`), and validate strictly (`domain in ("youtube.com")` or `domain.endswith(".youtube.com")`).

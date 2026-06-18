@@ -654,8 +654,20 @@ def filter_youtube_cookies(cookies_path_obj: Path) -> None:
 
         filtered_lines_list: List[str] = []
         for line_str in lines_list:
-            if line_str.startswith("#") or "youtube.com" in line_str or "google.com" in line_str:
+            if line_str.startswith("#") and not line_str.startswith("#HttpOnly_"):
                 filtered_lines_list.append(line_str)
+                continue
+            if not line_str.strip():
+                filtered_lines_list.append(line_str)
+                continue
+
+            parts = line_str.split("\t")
+            if len(parts) >= 1:
+                domain = parts[0]
+                if domain.startswith("#HttpOnly_"):
+                    domain = domain[10:]
+                if domain in ("youtube.com", "google.com") or domain.endswith((".youtube.com", ".google.com")):
+                    filtered_lines_list.append(line_str)
 
         # Grava de volta o arquivo higienizado
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:
