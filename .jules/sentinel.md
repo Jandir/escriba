@@ -1,0 +1,4 @@
+## 2024-05-18 - Cross-Domain Cookie Leakage in yt-dlp Cookie Extraction
+**Vulnerability:** Cookie filtering functions used a broad substring search (e.g. `'youtube.com' in line_str`) which could inadvertently match and extract cookies from malicious domains like `evilyoutube.com`. Also, `#HttpOnly_` prefix was not handled, which could leak other domains' httponly cookies or drop expected ones.
+**Learning:** Netscape HTTP Cookie Files are tab-separated. Filtering must explicitly split by `\t` and validate the exact domain. Lines starting with `#` are comments, but `#HttpOnly_` is a special prefix for secure cookies and must be parsed as a cookie line.
+**Prevention:** Always parse structured cookie files using exact delimiter splitting (`\t`) and strip prefixes like `#HttpOnly_` before comparing domain names. Never use blind substring matching on security-sensitive files.
