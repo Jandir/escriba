@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 import re
@@ -149,6 +150,15 @@ def _update_countdown_line(remaining_int: int, total_int: int, width_int: int, m
     sys.stdout.flush()
 
 
+# BOLT OPTIMIZATION:
+# Pre-compile regular expressions globally to avoid recompilation on every function call.
+_EXT_RE = re.compile(r'\.(srt|md|txt|json|vtt)$', flags=re.IGNORECASE)
+_ORIG_RE = re.compile(r'-orig$', flags=re.IGNORECASE)
+_LANG_RE = re.compile(r'[.\-][a-z]{2}(?:-[a-z]{2,3})?$', flags=re.IGNORECASE)
+_YT_CANDIDATE_RE = re.compile(r'^[A-Za-z0-9_-]{11}$')
+_YT_ID_FIND_RE = re.compile(r'([A-Za-z0-9_-]{11})')
+_VALID_CHAR_RE = re.compile(r'[A-Za-z0-9_-]')
+
 def extract_video_id(filename_or_path: str) -> str:
     """
     Extrai o ID único de vídeo (11 caracteres do YouTube ou numérico do Vimeo) de caminhos de arquivos.
@@ -158,7 +168,7 @@ def extract_video_id(filename_or_path: str) -> str:
     (ex: "meu_canal-ZHbX0yoC8uo.info.json" ou "canal-123456789.pt.srt").
     
     Passos do Algoritmo:
-    1. Usamos `Path(filename_or_path).name` para descartar toda a estrutura de pastas do sistema
+    1. Usamos `os.path.basename` para descartar toda a estrutura de pastas do sistema
        operacional, isolando apenas o nome do arquivo final (ex: "/usr/bin/arq.txt" vira "arq.txt").
     2. Removemos as extensões comuns de metadados como ".info.json" ou ".srt" usando substituição de Regex.
     3. Limpamos os sufixos de idioma que costumam ser anexados pelas ferramentas (ex: ".pt-br" ou "-en").
@@ -167,37 +177,39 @@ def extract_video_id(filename_or_path: str) -> str:
     5. Se falhar, fazemos um fallback rodando uma varredura geral por trás em busca de qualquer
        sequência alfanumérica de 11 dígitos, pegando a que estiver mais próxima da ponta direita.
     """
-    name: str = str(Path(filename_or_path).name)
+    # BOLT OPTIMIZATION:
+    # Use os.path.basename instead of Path().name to avoid object instantiation overhead.
+    name: str = os.path.basename(filename_or_path)
     
     # 1. Remove as extensões de arquivo sem se importar com maiúsculas/minúsculas
     if name.lower().endswith(".info.json"):
         name = name[:-10]
     else:
-        name = re.sub(r'\.(srt|md|txt|json|vtt)$', '', name, flags=re.IGNORECASE)
+        name = _EXT_RE.sub('', name)
         
     # 2. Remove o sufixo '-orig' se presente no final (comum em arquivos markdown processados)
-    name = re.sub(r'-orig$', '', name, flags=re.IGNORECASE)
+    name = _ORIG_RE.sub('', name)
         
     # 3. Remove sufixos de idioma como '.pt-br', '.en', '-en'
     # O regex `[.\-][a-z]{2}(?:-[a-z]{2,3})?$` procura um traço ou ponto, seguido de duas letras,
     # opcionalmente seguido de outro traço e mais 2 ou 3 letras, ancorado no final da string ($).
-    name = re.sub(r'[.\-][a-z]{2}(?:-[a-z]{2,3})?$', '', name, flags=re.IGNORECASE)
+    name = _LANG_RE.sub('', name)
     
     # 3. Verifica se o final do nome restante é um ID legítimo do YouTube (11 caracteres de padrão fixo)
     if len(name) >= 11:
         candidate: str = name[-11:]
-        if re.match(r'^[A-Za-z0-9_-]{11}$', candidate):
+        if _YT_CANDIDATE_RE.match(candidate):
             return candidate
             
     # 4. Caso não esteja na ponta (Vimeo ou nomes alterados), varremos toda a string por grupos de 11 caracteres.
-    matches: List[str] = re.findall(r'([A-Za-z0-9_-]{11})', name)
+    matches: List[str] = _YT_ID_FIND_RE.findall(name)
     if matches:
         # Percorremos a lista ao contrário para priorizar o ID mais próximo do fim do arquivo
         for m in reversed(matches):
             pos: int = name.rfind(m)
             # Uma medida extra de segurança: o ID legítimo não pode ter letras ou números grudados a ele,
             # pois isso indicaria que ele faz parte de uma palavra maior (como o próprio nome do canal).
-            if pos + 11 == len(name) or not re.match(r'[A-Za-z0-9_-]', name[pos+11]):
+            if pos + 11 == len(name) or not _VALID_CHAR_RE.match(name[pos+11]):
                 return m
         return matches[-1]
 
