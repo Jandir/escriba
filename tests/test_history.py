@@ -58,30 +58,30 @@ class TestGetLatestJsonPath:
     def test_retorna_oficial_quando_existe(self, tmp_path: Path):
         """Se o arquivo oficial existe, deve ser retornado diretamente."""
         official_path: Path = tmp_path / f"escriba_{tmp_path.name}.json"
-        official_path.write_text("{}")
+        official_path.write_text("{}", encoding="utf-8")
         assert get_latest_json_path(tmp_path) == official_path
 
     def test_retorna_legado_quando_oficial_ausente(self, tmp_path: Path):
         """Sem o oficial, deve retornar o legado mais recente (escriba_*)."""
         legacy_path: Path = tmp_path / "escriba_canalantigo.json"
-        legacy_path.write_text("{}")
+        legacy_path.write_text("{}", encoding="utf-8")
         result_path: Path = get_latest_json_path(tmp_path)
         assert result_path == legacy_path
 
     def test_retorna_lista_legada_quando_unica_opcao(self, tmp_path: Path):
         """Deve aceitar o formato ainda mais antigo lista_*.json."""
         list_path: Path = tmp_path / "lista_foo.json"
-        list_path.write_text("{}")
+        list_path.write_text("{}", encoding="utf-8")
         result_path: Path = get_latest_json_path(tmp_path)
         assert result_path == list_path
 
     def test_retorna_mais_recente_entre_multiplos_legados(self, tmp_path):
         """Com múltiplos legados, deve retornar o modificado mais recentemente."""
         old = tmp_path / "escriba_antigo.json"
-        old.write_text("{}")
+        old.write_text("{}", encoding="utf-8")
         time.sleep(0.01)  # Garante diferença de timestamp
         new = tmp_path / "escriba_novo.json"
-        new.write_text("{}")
+        new.write_text("{}", encoding="utf-8")
         result = get_latest_json_path(tmp_path)
         assert result == new
 
@@ -180,7 +180,7 @@ class TestParseMasterJson:
     def test_le_formato_moderno(self, tmp_path):
         """Formato moderno: dict com chave 'videos'."""
         jf = tmp_path / "escriba_test.json"
-        jf.write_text(json.dumps({"videos": [{"video_id": "V001", "title": "Aula"}]}))
+        jf.write_text(json.dumps({"videos": [{"video_id": "V001", "title": "Aula"}]}), encoding="utf-8")
         history_map = {}
         _parse_master_json(jf, history_map)
         assert "V001" in history_map
@@ -188,7 +188,7 @@ class TestParseMasterJson:
     def test_le_formato_legado_lista_pura(self, tmp_path):
         """Formato legado: lista direta de vídeos sem wrapper."""
         jf = tmp_path / "lista_old.json"
-        jf.write_text(json.dumps([{"id": "V002", "title": "Palestra"}]))
+        jf.write_text(json.dumps([{"id": "V002", "title": "Palestra"}]), encoding="utf-8")
         history_map = {}
         _parse_master_json(jf, history_map)
         assert "V002" in history_map
@@ -196,7 +196,7 @@ class TestParseMasterJson:
     def test_ignora_arquivo_corrompido(self, tmp_path):
         """JSON inválido não deve lançar exceção — apenas ignorado."""
         jf = tmp_path / "escriba_bad.json"
-        jf.write_text("ISSO NAO EH JSON {{{")
+        jf.write_text("ISSO NAO EH JSON {{{", encoding="utf-8")
         history_map = {}
         _parse_master_json(jf, history_map)  # Não deve lançar
         assert history_map == {}
@@ -212,7 +212,7 @@ class TestParseVideoMetadataJson:
     def test_converte_data_yyyymmdd(self, tmp_path):
         """Data no formato 20240115 deve ser convertida para 2024-01-15."""
         jf = tmp_path / "video-AbCdEfGhIjK.info.json"
-        jf.write_text(json.dumps({"title": "Vídeo X", "upload_date": "20240115"}))
+        jf.write_text(json.dumps({"title": "Vídeo X", "upload_date": "20240115"}), encoding="utf-8")
         history_map = {}
         _parse_video_metadata_json(jf, "AbCdEfGhIjK", history_map)
         assert history_map["AbCdEfGhIjK"]["publish_date"] == "2024-01-15"
@@ -220,7 +220,7 @@ class TestParseVideoMetadataJson:
     def test_usa_fulltitle_como_fallback(self, tmp_path):
         """Se não houver 'title', deve usar 'fulltitle'."""
         jf = tmp_path / "video-AbCdEfGhIjK.info.json"
-        jf.write_text(json.dumps({"fulltitle": "Título Completo", "upload_date": "20240101"}))
+        jf.write_text(json.dumps({"fulltitle": "Título Completo", "upload_date": "20240101"}), encoding="utf-8")
         history_map = {}
         _parse_video_metadata_json(jf, "AbCdEfGhIjK", history_map)
         assert history_map["AbCdEfGhIjK"]["title"] == "Título Completo"
@@ -228,7 +228,7 @@ class TestParseVideoMetadataJson:
     def test_ignora_nao_dict(self, tmp_path):
         """Se o arquivo contiver uma lista em vez de dict, deve ser ignorado."""
         jf = tmp_path / "video-AbCdEfGhIjK.info.json"
-        jf.write_text("[]")
+        jf.write_text("[]", encoding="utf-8")
         history_map = {}
         _parse_video_metadata_json(jf, "AbCdEfGhIjK", history_map)
         assert "AbCdEfGhIjK" not in history_map
@@ -247,7 +247,7 @@ class TestSaveChannelStateJson:
         json_path = tmp_path / "escriba_test.json"
         save_channel_state_json(json_path, sample_videos)
         assert json_path.exists()
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding='utf-8'))
         assert "videos" in data
         assert len(data["videos"]) == 2
 
@@ -255,7 +255,7 @@ class TestSaveChannelStateJson:
         """Campo detected_language deve estar presente quando informado."""
         json_path = tmp_path / "escriba_test.json"
         save_channel_state_json(json_path, [], detected_language_str="pt")
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding='utf-8'))
         assert data.get("detected_language") == "pt"
 
     def test_deduplica_videos_com_mesmo_id(self, tmp_path):
@@ -266,7 +266,7 @@ class TestSaveChannelStateJson:
         ]
         json_path = tmp_path / "escriba_dup.json"
         save_channel_state_json(json_path, videos)
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding='utf-8'))
         assert len(data["videos"]) == 1
         assert data["videos"][0]["title"] == "Título Real"
         assert data["videos"][0]["subtitle_downloaded"] is True
@@ -288,7 +288,7 @@ class TestSaveChannelStateJson:
         # Esse save NÃO deve apagar @CanalNovo da lista
         save_channel_state_json(json_path, [], youtube_channel_url_str="https://youtube.com/@CanalOriginal")
 
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding='utf-8'))
         assert "youtube_channels" in data
         assert "@CanalNovo" in data["youtube_channels"], (
             "BUG: save_channel_state_json apagou @CanalNovo da lista youtube_channels!"
@@ -310,14 +310,14 @@ class TestSaveChannelStateJson:
         # Primeiro save (processando @CanalA)
         save_channel_state_json(json_path, [{"video_id": "v1", "title": "A"}],
                                 youtube_channel_url_str="https://youtube.com/@CanalA")
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding='utf-8'))
         assert "@CanalA" in data["youtube_channels"]
         assert "@CanalB" in data["youtube_channels"]
 
         # Segundo save (processando @CanalB)
         save_channel_state_json(json_path, [{"video_id": "v2", "title": "B"}],
                                 youtube_channel_url_str="https://youtube.com/@CanalB")
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding='utf-8'))
         assert "@CanalA" in data["youtube_channels"]
         assert "@CanalB" in data["youtube_channels"]
         assert len(data["videos"]) == 1  # Cada save traz apenas os vídeos do seu canal
@@ -338,30 +338,30 @@ class TestRegisterChannelInJson:
     def test_registra_canal_novo_em_json_existente(self, tmp_path):
         """Canal não cadastrado deve ser adicionado e is_new=True retornado."""
         json_path = tmp_path / "escriba_test.json"
-        json_path.write_text(json.dumps({"youtube_channels": ["@CanalA"], "videos": []}))
+        json_path.write_text(json.dumps({"youtube_channels": ["@CanalA"], "videos": []}), encoding="utf-8")
 
         is_new, registered = register_channel_in_json(json_path, "@CanalB")
 
         assert is_new is True
         assert registered is True
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding='utf-8'))
         assert "@CanalB" in data["youtube_channels"]
 
     def test_canal_ja_existente_nao_e_duplicado(self, tmp_path):
         """Canal já cadastrado deve retornar is_new=False sem modificar o arquivo."""
         json_path = tmp_path / "escriba_test.json"
-        json_path.write_text(json.dumps({"youtube_channels": ["@CanalA"], "videos": []}))
+        json_path.write_text(json.dumps({"youtube_channels": ["@CanalA"], "videos": []}), encoding="utf-8")
 
         is_new, registered = register_channel_in_json(json_path, "@CanalA")
 
         assert is_new is False
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding='utf-8'))
         assert data["youtube_channels"].count("@CanalA") == 1  # Não duplicou
 
     def test_comparacao_case_insensitive(self, tmp_path):
         """@MeuCanal e @meucanal devem ser tratados como o mesmo canal."""
         json_path = tmp_path / "escriba_test.json"
-        json_path.write_text(json.dumps({"youtube_channels": ["@MeuCanal"], "videos": []}))
+        json_path.write_text(json.dumps({"youtube_channels": ["@MeuCanal"], "videos": []}), encoding="utf-8")
 
         is_new, _ = register_channel_in_json(json_path, "@meucanal")
 
@@ -370,39 +370,39 @@ class TestRegisterChannelInJson:
     def test_normaliza_handle_sem_arroba(self, tmp_path):
         """Um handle sem @ deve receber o prefixo automaticamente."""
         json_path = tmp_path / "escriba_test.json"
-        json_path.write_text(json.dumps({"youtube_channels": [], "videos": []}))
+        json_path.write_text(json.dumps({"youtube_channels": [], "videos": []}), encoding="utf-8")
 
         register_channel_in_json(json_path, "CanalSemArroba")
 
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding='utf-8'))
         assert "@CanalSemArroba" in data["youtube_channels"]
 
     def test_url_completa_mantida_como_esta(self, tmp_path):
         """URLs completas (http...) não recebem prefixo @ e são armazenadas como estão."""
         json_path = tmp_path / "escriba_test.json"
-        json_path.write_text(json.dumps({"youtube_channels": [], "videos": []}))
+        json_path.write_text(json.dumps({"youtube_channels": [], "videos": []}), encoding="utf-8")
 
         url = "https://www.youtube.com/@MeuCanal"
         register_channel_in_json(json_path, url)
 
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding='utf-8'))
         assert url in data["youtube_channels"]
 
     def test_cria_lista_de_canais_se_ausente(self, tmp_path):
         """Se o JSON não tiver youtube_channels ainda, deve criar a chave."""
         json_path = tmp_path / "escriba_test.json"
-        json_path.write_text(json.dumps({"videos": []}))  # Sem youtube_channels
+        json_path.write_text(json.dumps({"videos": []}), encoding="utf-8")  # Sem youtube_channels
 
         is_new, _ = register_channel_in_json(json_path, "@Novo")
 
         assert is_new is True
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding='utf-8'))
         assert "@Novo" in data["youtube_channels"]
 
     def test_retorna_false_false_para_handle_vazio(self, tmp_path):
         """String vazia deve retornar (False, False) sem modificar nada."""
         json_path = tmp_path / "escriba_test.json"
-        json_path.write_text(json.dumps({"videos": []}))
+        json_path.write_text(json.dumps({"videos": []}), encoding="utf-8")
 
         is_new, registered = register_channel_in_json(json_path, "")
 
@@ -412,13 +412,13 @@ class TestRegisterChannelInJson:
     def test_acumula_varios_canais_sequencialmente(self, tmp_path):
         """Registros sequenciais devem acumular todos os canais sem perder nenhum."""
         json_path = tmp_path / "escriba_test.json"
-        json_path.write_text(json.dumps({"videos": []}))
+        json_path.write_text(json.dumps({"videos": []}), encoding="utf-8")
 
         register_channel_in_json(json_path, "@Canal1")
         register_channel_in_json(json_path, "@Canal2")
         register_channel_in_json(json_path, "@Canal3")
 
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding='utf-8'))
         canais = data["youtube_channels"]
         assert "@Canal1" in canais
         assert "@Canal2" in canais
@@ -471,7 +471,7 @@ class TestIntegracaoRegisterSave:
             youtube_channel_url_str="https://youtube.com/@CanalNovo"
         )
 
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding='utf-8'))
 
         # Ambos os canais devem estar presentes
         assert "@CanalOriginal" in data["youtube_channels"], \
@@ -526,7 +526,7 @@ class TestAutoMigateLegacyFiles:
 
     def test_migra_subtitle_downloaded_do_historico_txt(self, tmp_path):
         """IDs no historico.txt devem ter subtitle_downloaded=True no JSON."""
-        (tmp_path / "historico.txt").write_text("youtube V1234567890\n")
+        (tmp_path / "historico.txt").write_text("youtube V1234567890\n", encoding="utf-8")
         state = [{"video_id": "V1234567890", "subtitle_downloaded": False}]
         auto_migrate_legacy_files(tmp_path, state)
         assert state[0]["subtitle_downloaded"] is True
@@ -534,7 +534,7 @@ class TestAutoMigateLegacyFiles:
     def test_renomeia_arquivos_legados_para_bak(self, tmp_path):
         """Após migração, os .txt devem ser renomeados para .bak."""
         hist = tmp_path / "historico.txt"
-        hist.write_text("youtube V1234567890\n")
+        hist.write_text("youtube V1234567890\n", encoding="utf-8")
         auto_migrate_legacy_files(tmp_path, [{"video_id": "V1234567890"}])
         assert not hist.exists()
         assert (tmp_path / "historico.txt.bak").exists()
@@ -554,14 +554,14 @@ class TestReadLegacyIdFile:
 
     def test_le_ids_com_prefixo(self, tmp_path):
         f = tmp_path / "historico.txt"
-        f.write_text("youtube V1234567890\nyoutube ZZZyyyXXX22\n")
+        f.write_text("youtube V1234567890\nyoutube ZZZyyyXXX22\n", encoding="utf-8")
         ids = _read_legacy_id_file(f, "youtube ")
         assert "V1234567890" in ids
         assert "ZZZyyyXXX22" in ids
 
     def test_ignora_linhas_sem_prefixo(self, tmp_path):
         f = tmp_path / "historico.txt"
-        f.write_text("# comentario\nyoutube V1234567890\n")
+        f.write_text("# comentario\nyoutube V1234567890\n", encoding="utf-8")
         ids = _read_legacy_id_file(f, "youtube ")
         assert len(ids) == 1
 
@@ -579,13 +579,13 @@ class TestReadLegacyNosubFile:
 
     def test_extrai_id_da_url(self, tmp_path):
         f = tmp_path / "videos_sem_legenda.txt"
-        f.write_text("https://www.youtube.com/watch?v=dQw4w9WgXcQ\n")
+        f.write_text("https://www.youtube.com/watch?v=dQw4w9WgXcQ\n", encoding="utf-8")
         ids = _read_legacy_nosub_file(f)
         assert "dQw4w9WgXcQ" in ids
 
     def test_ignora_linhas_sem_watch_v(self, tmp_path):
         f = tmp_path / "videos_sem_legenda.txt"
-        f.write_text("linha sem url\nhttps://www.youtube.com/watch?v=AbCdEfGhIjK\n")
+        f.write_text("linha sem url\nhttps://www.youtube.com/watch?v=AbCdEfGhIjK\n", encoding="utf-8")
         ids = _read_legacy_nosub_file(f)
         assert len(ids) == 1
 
@@ -603,7 +603,7 @@ class TestLoadAllLocalHistory:
 
     def test_le_banco_principal_moderno(self, tmp_path):
         jf = tmp_path / "escriba_canal.json"
-        jf.write_text(json.dumps({"videos": [{"video_id": "V001", "title": "Test"}]}))
+        jf.write_text(json.dumps({"videos": [{"video_id": "V001", "title": "Test"}]}), encoding="utf-8")
         history = load_all_local_history(tmp_path)
         assert "V001" in history
 
@@ -616,13 +616,13 @@ class TestLoadAllLocalHistory:
         Por isso usamos um nome cujo único bloco de 11 chars é o ID do vídeo.
         """
         jf = tmp_path / "AbCdEfGhIjK.info.json"  # ID sozinho no stem
-        jf.write_text(json.dumps({"title": "Título Avulso", "upload_date": "20240301"}))
+        jf.write_text(json.dumps({"title": "Título Avulso", "upload_date": "20240301"}), encoding="utf-8")
         history = load_all_local_history(tmp_path)
         assert "AbCdEfGhIjK" in history
 
     def test_ignora_package_json(self, tmp_path):
         """package.json e similares da blacklist devem ser ignorados."""
-        (tmp_path / "package.json").write_text('{"name": "app"}')
+        (tmp_path / "package.json").write_text('{"name": "app"}', encoding="utf-8")
         history = load_all_local_history(tmp_path)
         assert history == {}
 
@@ -640,7 +640,7 @@ class TestLoadAllLocalHistory:
         }))
         # Nome com ID isolado como primeiro bloco de 11 chars no stem
         avulso = tmp_path / "AbCdEfGhIjK.info.json"
-        avulso.write_text(json.dumps({"title": "Título Real", "upload_date": "20240115"}))
+        avulso.write_text(json.dumps({"title": "Título Real", "upload_date": "20240115"}), encoding="utf-8")
 
         history = load_all_local_history(tmp_path)
 

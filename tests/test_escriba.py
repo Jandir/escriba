@@ -297,6 +297,29 @@ def test_filter_cookies_if_present_vimeo(mock_is_file, mock_filter_vimeo):
     mock_filter_vimeo.assert_called_once_with(Path("/dummy/cookies.txt"))
 
 
+def test_yaml_safe():
+    """Valida se a tag yaml_safe (PEP 750) escapa aspas duplas em campos entre aspas."""
+    # Aspas dentro de campo entre aspas do template -> devem ser escapadas
+    titulo = 'O "Novo" Vídeo'
+    tmpl = t'title: "{titulo}"'
+    assert escriba.yaml_safe(tmpl) == 'title: "O \\"Novo\\" Vídeo"'
+
+    # Aspas em campo sem aspas no template -> não devem ser escapadas
+    tmpl_raw = t'# {titulo}'
+    assert escriba.yaml_safe(tmpl_raw) == '# O "Novo" Vídeo'
 
 
-
+def test_generate_md_header_with_quotes():
+    """Valida se generate_md_header formata corretamente o cabeçalho YAML escapando aspas no título."""
+    header = escriba.generate_md_header(
+        video_title='O "Novo" Vídeo',
+        video_id="dQw4w9WgXcQ",
+        video_date="2026-06-20",
+        duration_str="00:15:30",
+        lang_code="pt",
+        version="2.6.7"
+    )
+    header_str = "".join(header)
+    assert 'title: "O \\"Novo\\" Vídeo"' in header_str
+    assert 'video_id: "dQw4w9WgXcQ"' in header_str
+    assert 'O "Novo" Vídeo' in header_str  # O H1 não deve ter escape de aspas

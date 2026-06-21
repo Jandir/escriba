@@ -95,11 +95,15 @@ def setup_environment() -> Tuple[Path, List[str]]:
     return script_dir_path_obj, yt_dlp_cmd_list
 
 
+CHOSEN_BROWSER: str = "firefox"
+
+
 def configure_cookies(
     cwd_path_obj: Path, 
     script_dir_path_obj: Path, 
     force_refresh_bool: bool, 
-    silent_bool: bool = False
+    silent_bool: bool = False,
+    browser_str: Optional[str] = None
 ) -> List[str]:
     """
     Configura os cookies de autenticação para as requisições de download.
@@ -108,9 +112,15 @@ def configure_cookies(
     - Se o usuário usar `--refresh-cookies`, apagamos o arquivo local cookies.txt.
     - Se o arquivo cookies.txt existir e for válido, usamos ele como cache local de cookies.
     - Se não houver arquivo cookies.txt no disco, o yt-dlp possui uma funcionalidade incrível
-      que consegue ler os cookies que o usuário já tem salvos no navegador Chrome local
-      (`--cookies-from-browser chrome`), exportando-os para o arquivo cookies.txt para as próximas execuções.
+      que consegue ler os cookies que o usuário já tem salvos no navegador local
+      (`--cookies-from-browser navegador`), exportando-os para o arquivo cookies.txt para as próximas execuções.
     """
+    global CHOSEN_BROWSER
+    if browser_str is not None:
+        CHOSEN_BROWSER = browser_str
+    else:
+        browser_str = CHOSEN_BROWSER
+
     cookies_path_obj: Path = cwd_path_obj / "cookies.txt"
     
     if force_refresh_bool:
@@ -124,10 +134,10 @@ def configure_cookies(
             print_info(f"Usando arquivo de cookies: {cookies_path_obj.name}")
         return ["--cookies", str(cookies_path_obj)]
         
-    # Caso contrário, extrai do Chrome do sistema operacional
+    # Caso contrário, extrai do navegador do sistema operacional
     if not silent_bool: 
-        print_warn(f"Extraindo credenciais de sessão do Google Chrome → {cookies_path_obj.name}")
-    return ["--cookies-from-browser", "chrome", "--cookies", str(cookies_path_obj)]
+        print_warn(f"Extraindo credenciais de sessão do navegador '{browser_str}' → {cookies_path_obj.name}")
+    return ["--cookies-from-browser", browser_str, "--cookies", str(cookies_path_obj)]
 
 
 def _is_valid_cookie_file(path_obj: Path) -> bool:
@@ -197,7 +207,7 @@ def detect_language(
         
         try:
             # Roda o comando de forma síncrona esperando até 20 segundos
-            process_result_obj = subprocess.run(cmd_list, capture_output=True, text=True, timeout=20)
+            process_result_obj = subprocess.run(cmd_list, capture_output=True, text=True, encoding="utf-8", timeout=20)
             current_langs = [
                 line_str.strip().lower() 
                 for line_str in process_result_obj.stdout.splitlines() 
@@ -278,7 +288,7 @@ def generate_fast_list_json(
         try:
             # Cria o subprocesso com pipe para capturar a saída padrão (stdout)
             process_obj = subprocess.Popen(
-                cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+                cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8"
             )
             
             if process_obj.stdout:
@@ -353,6 +363,17 @@ def _normalize_lang_pattern(lang_str: str) -> str:
     return f"^{lang_str}.*"
 
 
+def escriba_progress_hook(d):
+    """Callback invocado periodicamente pelo yt-dlp durante o download de arquivos.
+    No Windows, o interpretador Python fica bloqueado durante chamadas de rede C (I/O).
+    Executar código Python (como esta função) força o interpretador a checar por sinais
+    pendentes (como SIGINT/Ctrl+C) e disparar a KeyboardInterrupt imediatamente.
+    """
+    import sys
+    if getattr(sys, "_escriba_interrupted", False):
+        raise KeyboardInterrupt
+
+
 def download_video(
     yt_dlp_cmd_list: List[str], 
     cookie_args_list: List[str], 
@@ -385,7 +406,7 @@ def download_video(
        roda a rotina de renovação de cookies do navegador Chrome e faz uma segunda tentativa
        de download com as credenciais limpas antes de desistir.
     """
-    output_template_str: str = f"{folder_name_str}-{video_id_str}"
+    output_template_str: str = f"{folder_name_str}-{video_id_str}.%(ext)s"
     url = f"https://www.youtube.com/watch?v={video_id_str}"
     
     download_args = ["-f", "bestvideo[height<=1080]"] if download_video_only_hd else ["--skip-download"]
@@ -450,8 +471,10 @@ def download_video(
                         is_auto = True
                         break
                         
-            # Modifica as opções de download para restringir apenas ao idioma selecionado
+            # Modifica as opções de download para instruir progresso e restringir apenas ao idioma selecionado
             download_opts = dict(parsed_opts)
+            download_opts['progress_hooks'] = [escriba_progress_hook]
+            
             
             if chosen_lang:
                 download_opts.update({
@@ -488,6 +511,8 @@ def download_video(
                 
             return 0
         except Exception as error_obj:
+            if getattr(sys, "_escriba_interrupted", False):
+                raise KeyboardInterrupt
             error_str = str(error_obj)
             is_429 = "429" in error_str or "too many requests" in error_str.lower()
             
@@ -501,7 +526,7 @@ def download_video(
                 print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
                 try:
                     user_input = input().strip().lower()
-                except (KeyboardInterrupt, EOFError):
+                except KeyboardInterrupt, EOFError:
                     print_err("\nProcesso interrompido pelo usuário.")
                     raise KeyboardInterrupt
                 
@@ -571,6 +596,7 @@ def download_video(
                             break
                             
                 download_opts_retry = dict(parsed_opts_retry)
+                download_opts_retry['progress_hooks'] = [escriba_progress_hook]
                 if chosen_lang:
                     download_opts_retry.update({
                         'writesubtitles': not is_auto,
@@ -602,6 +628,8 @@ def download_video(
                     ydl_dl.process_info(info)
                 return 0
             except Exception as retry_error:
+                if getattr(sys, "_escriba_interrupted", False):
+                    raise KeyboardInterrupt
                 retry_str = str(retry_error)
                 if "429" in retry_str or "too many requests" in retry_str.lower():
                     print_warn(f"\n⚠ [HTTP 429] Limite de requisições excedido no vídeo {video_id_str} após tentativa de correção automática.")
@@ -612,7 +640,7 @@ def download_video(
                     print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
                     try:
                         user_input = input().strip().lower()
-                    except (KeyboardInterrupt, EOFError):
+                    except KeyboardInterrupt, EOFError:
                         print_err("\nProcesso interrompido pelo usuário.")
                         raise KeyboardInterrupt
                     

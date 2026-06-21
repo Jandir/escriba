@@ -42,6 +42,31 @@ def test_get_eligible_files_with_archive(tmp_path):
     assert "aleatorio.txt" not in eligible_files
     assert len(eligible_files) == 2
 
+def test_get_eligible_files_without_archive(tmp_path):
+    """
+    Verifica se o Lexis ignora os arquivos no archive quando scan_archive_bool é False.
+    """
+    # 1. Prepara a estrutura de pastas
+    channel_path = tmp_path / "meucanal"
+    channel_path.mkdir()
+    archive_path = channel_path / ARCHIVE_DIR_NAME
+    archive_path.mkdir()
+    
+    # 2. Cria arquivos fictícios
+    f1 = channel_path / "meucanal--ABC12345678.txt"
+    f1.write_text("conteudo 1")
+    
+    f2 = archive_path / "meucanal--XYZ12345678.md"
+    f2.write_text("conteudo 2")
+    
+    # 3. Executa a função passando scan_archive_bool=False
+    eligible_files = _get_eligible_files(str(channel_path), "meucanal", scan_archive_bool=False)
+    
+    # 4. Validações: apenas o arquivo da pasta principal deve ser listado
+    assert "meucanal--ABC12345678.txt" in eligible_files
+    assert os.path.join(ARCHIVE_DIR_NAME, "meucanal--XYZ12345678.md") not in eligible_files
+    assert len(eligible_files) == 1
+
 def test_get_eligible_files_only_main(tmp_path):
     """Verifica se funciona apenas com a pasta principal (sem archive)."""
     channel_path = tmp_path / "canal2"

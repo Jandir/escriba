@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Versão-2.6.7-blue?style=for-the-badge" alt="Versão">
-  <img src="https://img.shields.io/badge/Python-3.13+-ffd343?style=for-the-badge&logo=python&logoColor=black" alt="Python">
+  <img src="https://img.shields.io/badge/Versão-2.7.0-blue?style=for-the-badge" alt="Versão">
+  <img src="https://img.shields.io/badge/Python-3.14+-ffd343?style=for-the-badge&logo=python&logoColor=black" alt="Python">
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/Licença-MIT-green?style=for-the-badge" alt="Licença">
   <img src="https://img.shields.io/badge/Target-NotebookLM-6f42c1?style=for-the-badge&logo=google" alt="NotebookLM">
