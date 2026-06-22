@@ -805,7 +805,11 @@ def srt_to_md(
         lang, segs, vec, tfidf, stops, clean_texts
     )
     md_file_path = srt_path.with_suffix(".md")
-    md_file_path.write_text("".join(md_lines), encoding="utf-8-sig")
+    try:
+        md_file_path.write_text("".join(md_lines), encoding="utf-8-sig")
+    except OSError as e:
+        print_warn(f"Erro ao escrever MD: {e}", indentation_prefix_str)
+        return None
     return md_file_path
 
 
