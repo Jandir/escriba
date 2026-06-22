@@ -9,7 +9,7 @@ from typing import Dict, List, Any
 # Adiciona diretório pai no path para facilitar import local
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from escriba import clean_ekklezia_terms, _strip_rollup, create_adaptive_windows
+from escriba import clean_ekklezia_terms, _strip_rollup, create_adaptive_windows, srt_to_md, _dedup_lines
 import pysrt
 import escriba
 import youtube
@@ -62,7 +62,7 @@ def test_create_adaptive_windows_basic():
     mock_sub2.text = "Mundo"
     
     subs_list = [mock_sub1, mock_sub2]
-    windows_list = create_adaptive_windows(subs_list, window_size_s_int=60)
+    windows_list, clean_texts = create_adaptive_windows(subs_list, window_size_s_int=60)
     
     assert len(windows_list) == 1
     assert windows_list[0]["text"] == "Olá Mundo"
@@ -297,6 +297,140 @@ def test_filter_cookies_if_present_vimeo(mock_is_file, mock_filter_vimeo):
     mock_filter_vimeo.assert_called_once_with(Path("/dummy/cookies.txt"))
 
 
+# ─── SRT -> MD Pipeline ─────────────────────────────────────────────────────
+
+import tempfile
+
+def test_srt_to_md_basic():
+    """Verifica o fluxo completo de conversão SRT para MD."""
+    srt_content = """1
+00:00:01,000 --> 00:00:05,000
+Ola pessoal bem vindos ao canal
+
+2
+00:00:05,500 --> 00:00:10,000
+Hoje vamos falar sobre programacao em Python
+
+3
+00:00:10,500 --> 00:00:15,000
+Python e uma linguagem muito versatil
+
+4
+00:00:15,500 --> 00:00:20,000
+Ela e usada em muitas areas
+
+5
+00:00:20,500 --> 00:00:25,000
+Vamos comecar com os fundamentos
+
+6
+00:00:25,500 --> 00:00:30,000
+Primeiro vamos entender variaveis
+
+7
+00:00:30,500 --> 00:00:35,000
+Variaveis sao espacos na memoria
+
+8
+00:00:35,500 --> 00:00:40,000
+Agora vamos falar sobre funcoes
+
+9
+00:00:40,500 --> 00:00:45,000
+Funcoes sao blocos de codigo
+
+10
+00:00:45,500 --> 00:00:50,000
+Elas ajudam a organizar o codigo
+
+11
+00:00:50,500 --> 00:00:55,000
+Vamos ver exemplos praticos agora
+
+12
+00:00:55,500 --> 00:01:00,000
+Espero que tenham gostado do video
+
+13
+00:01:00,500 --> 00:01:05,000
+Nao esquecam de se inscrever
+
+14
+00:01:05,500 --> 00:01:10,000
+E ativar o sininho de notificacoes
+"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        srt_path = Path(tmpdir) / "test-abc12345678-pt.srt"
+        srt_path.write_text(srt_content, encoding="utf-8")
+        result = srt_to_md(srt_path, "abc12345678", "Teste Python", "2026-01-01")
+        assert result is not None
+        assert result.exists()
+        md = result.read_text(encoding="utf-8")
+        assert "---" in md
+        assert "Teste Python" in md
+        assert "### Transcri" in md
+
+
+def test_srt_to_md_empty_file():
+    """Verifica comportamento com arquivo SRT vazio."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        srt_path = Path(tmpdir) / "test-abc12345678-pt.srt"
+        srt_path.write_text("", encoding="utf-8")
+        result = srt_to_md(srt_path, "abc12345678", "Teste Vazio")
+        assert result is None
+
+
+def test_srt_to_md_nonexistent_file():
+    """Verifica comportamento com arquivo SRT inexistente."""
+    fake_path = Path("/tmp/nonexistent-abc12345678-pt.srt")
+    result = srt_to_md(fake_path, "abc12345678", "Teste Inexistente")
+    assert result is None
+
+
+def test_dedup_lines_word_level():
+    """Verifica dedup por palavras: 'cat' nao deve casar com 'category'."""
+    lines = ["cat", "category", " dogs"]
+    result = _dedup_lines(lines)
+    assert len(result) == 3
+
+
+def test_dedup_lines_rollup():
+    """Verifica dedup de roll-up: linha prefixo deve ser removida."""
+    lines = ["Ola pessoal", "Ola pessoal bem vindos"]
+    result = _dedup_lines(lines)
+    assert len(result) == 1
+    assert result[0] == "Ola pessoal bem vindos"
+
+
+def test_dedup_lines_identical():
+    """Verifica dedup de linhas identicas."""
+    lines = ["mesma linha", "mesma linha"]
+    result = _dedup_lines(lines)
+    assert len(result) == 1
+
+
+def test_create_adaptive_windows_returns_clean_texts():
+    """Verifica que create_adaptive_windows retorna tuple (windows, clean_texts)."""
+    mock_sub1 = MagicMock()
+    mock_sub1.start = pysrt.SubRipTime(seconds=1)
+    mock_sub1.end = pysrt.SubRipTime(seconds=5)
+    mock_sub1.text = "Olá mundo"
+    
+    mock_sub2 = MagicMock()
+    mock_sub2.start = pysrt.SubRipTime(seconds=10)
+    mock_sub2.end = pysrt.SubRipTime(seconds=15)
+    mock_sub2.text = "Teste de legenda"
+    
+    subs_list = [mock_sub1, mock_sub2]
+    result = create_adaptive_windows(subs_list, window_size_s_int=60)
+    
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    windows_list, clean_texts = result
+    assert isinstance(windows_list, list)
+    assert isinstance(clean_texts, dict)
+    assert len(windows_list) == 1
+    assert len(clean_texts) == 2
 
 
 

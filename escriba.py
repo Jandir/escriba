@@ -83,6 +83,7 @@ import requests
 from collections import Counter
 
 VERSION = "2.6.7"
+DEFAULT_THRESHOLD = 0.3
 
 _script_dir = Path(__file__).parent.resolve()
 
@@ -503,10 +504,11 @@ def _seg_keywords(seg_wins_list: list, tfidf_vec_obj, tfidf_mat_obj, win_indices
         if len(keywords_list) >= top_n_int: break
     return " · ".join(keywords_list) if keywords_list else ""
 
-def create_adaptive_windows(subs_list, window_size_s_int: int) -> list[dict]:
-    """Agrupa legendas em janelas temporais adaptativas."""
+def create_adaptive_windows(subs_list, window_size_s_int: int) -> tuple[list[dict], dict]:
+    """Agrupa legendas em janelas adaptativas. Retorna (windows, clean_texts)."""
     windows_list: list[dict] = []
     current_window_subs_list: list = []
+    clean_texts: dict = {}
     start_time_obj = subs_list[0].start
     prev_sub_text_str: str = ""
     for sub_obj in subs_list:
@@ -514,19 +516,18 @@ def create_adaptive_windows(subs_list, window_size_s_int: int) -> list[dict]:
         clean_text_str: str = _strip_rollup(raw_text_str, prev_sub_text_str)
         if clean_text_str:
             prev_sub_text_str = raw_text_str
-            sub_obj._clean_text = clean_text_str
+            clean_texts[id(sub_obj)] = clean_text_str
             current_window_subs_list.append(sub_obj)
         if (sub_obj.end - start_time_obj).seconds > window_size_s_int and current_window_subs_list:
-            w_text_str: str = " ".join(s._clean_text for s in current_window_subs_list if hasattr(s, '_clean_text'))
+            w_text_str: str = " ".join(clean_texts.get(id(s), "") for s in current_window_subs_list)
             if w_text_str:
                 windows_list.append({'text': w_text_str, 'timestamp': str(current_window_subs_list[0].start).split(',')[0], 'subs': current_window_subs_list})
             current_window_subs_list, start_time_obj = [], sub_obj.start
     if current_window_subs_list:
-        w_text_str: str = " ".join(s._clean_text for s in current_window_subs_list if hasattr(s, '_clean_text'))
+        w_text_str: str = " ".join(clean_texts.get(id(s), "") for s in current_window_subs_list)
         if w_text_str:
             windows_list.append({'text': w_text_str, 'timestamp': str(current_window_subs_list[0].start).split(',')[0], 'subs': current_window_subs_list})
-    
-    return windows_list
+    return windows_list, clean_texts
 
 def get_adaptive_config(total_duration_s: int) -> tuple[int, float, int]:
     """Calcula parâmetros adaptativos baseados na duração do vídeo."""
@@ -591,14 +592,16 @@ def generate_md_header(video_title: str, video_id: str, video_date: str, duratio
     ]
 
 def _dedup_lines(lines: list[str]) -> list[str]:
-    """Remove roll-up duplicatas: pula linha se começa com o token da linha anterior."""
+    """Remove roll-up duplicatas: pula linha se uma é prefixo de palavras da outra."""
     out = []
     for line in lines:
         if out:
-            prev_normalized = re.sub(r'\s+', ' ', out[-1]).lower()
-            cur_normalized  = re.sub(r'\s+', ' ', line).lower()
-            if cur_normalized in prev_normalized or prev_normalized in cur_normalized:
-                if len(cur_normalized) > len(prev_normalized):
+            prev_words = re.sub(r'\s+', ' ', out[-1]).lower().split()
+            cur_words  = re.sub(r'\s+', ' ', line).lower().split()
+            min_len = min(len(prev_words), len(cur_words))
+            overlap = min_len > 0 and all(prev_words[i] == cur_words[i] for i in range(min_len))
+            if overlap:
+                if len(cur_words) > len(prev_words):
                     out[-1] = line
                 continue
         out.append(line)
@@ -610,29 +613,40 @@ def _flush_paragraph(lines: list[str], para_ts: str, out: list[str]) -> None:
         return
     text = re.sub(r' {2,}', ' ', " ".join(lines)).strip()
     if text:
-        first_char = text[0].upper()
-        text = first_char + text[1:]
+        text = re.sub(r'(^|[.!?]\s+)(\w)', lambda m: m.group(0)[:-1] + m.group(0)[-1].upper(), text)
         out.append(f"[{para_ts}] {clean_ekklezia_terms(text)}\n\n")
 
 def _init_md_processing(srt_path: Path, indentation_prefix: str) -> tuple | None:
-    """Carrega dependências e abre o arquivo SRT."""
+    """Carrega dependências e abre o arquivo SRT com validação."""
+    if not srt_path.exists():
+        print_warn(f"Arquivo SRT não encontrado: {srt_path.name}", indentation_prefix)
+        return None
+    if srt_path.stat().st_size == 0:
+        print_warn(f"Arquivo SRT vazio: {srt_path.name}", indentation_prefix)
+        return None
     deps = _load_ml_deps()
     if not deps:
-        print_err("Faltam depêndencias de ML para MD.", indentation_prefix)
+        print_err("Faltam dependências de ML para MD.", indentation_prefix)
         return None
     pysrt, np, _, _, TfidfVectorizer, cosine_similarity = deps
     try:
         subs = pysrt.open(str(srt_path), encoding='utf-8')
-        if not subs: return None
-        return deps, subs
     except Exception as e:
-        print_warn(f"Erro ao abrir SRT: {e}", indentation_prefix)
+        print_warn(f"Erro ao abrir SRT (encoding ou formato inválido): {e}", indentation_prefix)
         return None
+    if not subs or len(subs) == 0:
+        print_warn(f"Arquivo SRT sem legendas: {srt_path.name}", indentation_prefix)
+        return None
+    valid_subs = [s for s in subs if s.text and s.text.strip()]
+    if len(valid_subs) == 0:
+        print_warn(f"Arquivo SRT sem texto válido: {srt_path.name}", indentation_prefix)
+        return None
+    return deps, subs
 
 
 def _setup_vectorizer(srt_path_name: str, windows: list[dict]):
     """Configura o vetorizador TF-IDF com base no idioma."""
-    lang_match = re.search(r"-([a-z]{2}(-[A-Z]{2})?)\.srt$", srt_path_name)
+    lang_match = re.search(r"[\.\-]([a-z]{2}(?:-[a-z]{2,3})?)\.srt$", srt_path_name, re.IGNORECASE)
     lang_code_str = lang_match.group(1).lower() if lang_match else "pt"
     oral_stopwords = get_merged_stopwords(lang_code_str)
 
@@ -643,15 +657,13 @@ def _setup_vectorizer(srt_path_name: str, windows: list[dict]):
     return vectorizer, tfidf_matrix, lang_code_str, oral_stopwords
 
 
-def _process_sub_into_para(sub, para_start_time, para_lines_list, md_lines, sentence_end_re):
+def _process_sub_into_para(sub, para_start_time, para_lines_list, md_lines, sentence_end_re, clean_texts=None):
     """Processa uma única legenda dentro de um parágrafo."""
-    sub_text_str = getattr(sub, '_clean_text', re.sub(r"<[^>]+>", "", sub.text.replace('\n', ' ')).strip())
+    sub_text_str = (clean_texts or {}).get(id(sub)) or re.sub(r"<[^>]+>", "", sub.text.replace('\n', ' ')).strip()
     sub_text_str = re.sub(r'\s+', ' ', sub_text_str)
     if not sub_text_str: return para_start_time, para_lines_list
-
     if para_start_time is None: para_start_time = sub.start
     para_lines_list.append(sub_text_str)
-
     elapsed_int = (sub.end - para_start_time).seconds
     if (elapsed_int >= 60 and sentence_end_re.search(sub_text_str)) or elapsed_int >= 120:
         _flush_paragraph(_dedup_lines(para_lines_list), _smart_ts(para_start_time), md_lines)
@@ -659,24 +671,22 @@ def _process_sub_into_para(sub, para_start_time, para_lines_list, md_lines, sent
     return para_start_time, para_lines_list
 
 
-def _generate_transcription_structured(segments: list, topic_labels: list[str], md_lines: list[str]):
+def _generate_transcription_structured(segments: list, topic_labels: list[str], md_lines: list[str], clean_texts: dict | None = None):
     """Gera a transcrição estruturada por tópicos."""
     sentence_end_re = re.compile(r'[.!?]["\']?\s*$')
     for (ts_str, _, seg_wins_list), label_str in zip(segments, topic_labels):
         md_lines.append(f"#### [{ts_str}] - Tópico: {label_str}\n")
         para_lines_list, para_start_time = [], None
-
         for window_dict in seg_wins_list:
             for sub_obj in window_dict['subs']:
                 para_start_time, para_lines_list = _process_sub_into_para(
-                    sub_obj, para_start_time, para_lines_list, md_lines, sentence_end_re
+                    sub_obj, para_start_time, para_lines_list, md_lines, sentence_end_re, clean_texts
                 )
-
         if para_lines_list:
             _flush_paragraph(_dedup_lines(para_lines_list), _smart_ts(para_start_time), md_lines)
 
 
-def _generate_md_body_sections(md_lines, segs_list, vec, tfidf_mat, stops):
+def _generate_md_body_sections(md_lines, segs_list, vec, tfidf_mat, stops, clean_texts=None):
     """Gera as seções de segmentos e transcrição do MD."""
     md_lines.append("### Segmentos de Tópicos (Timestamps)\n")
     topic_labels_list, win_idx_int = [], 0
@@ -687,34 +697,34 @@ def _generate_md_body_sections(md_lines, segs_list, vec, tfidf_mat, stops):
         label_str = "Introdução" if idx_int == 1 else (kw_str if kw_str else f"Tópico {idx_int}")
         topic_labels_list.append(label_str)
         md_lines.append(f"* `[{_smart_ts(s_wins[0]['subs'][0].start)}]` **{label_str}**\n")
-
     md_lines.append("\n### Transcrição Estruturada\n")
-    _generate_transcription_structured(segs_list, topic_labels_list, md_lines)
+    _generate_transcription_structured(segs_list, topic_labels_list, md_lines, clean_texts)
 
 
 def _generate_full_md_content(
     video_title_str: str, video_id_str: str, video_date_str: str, last_sub_end,
-    lang_str: str, segs_list: list, vec, tfidf_mat, stops
+    lang_str: str, segs_list: list, vec, tfidf_mat, stops, clean_texts=None
 ) -> list[str]:
     """Combina cabeçalho e corpo para gerar o conteúdo total do MD."""
     duration_str = _smart_ts(last_sub_end)
     md_lines_list = generate_md_header(
         video_title_str, video_id_str, video_date_str, duration_str, lang_str, VERSION
     )
-    _generate_md_body_sections(md_lines_list, segs_list, vec, tfidf_mat, stops)
+    _generate_md_body_sections(md_lines_list, segs_list, vec, tfidf_mat, stops, clean_texts)
     return md_lines_list
 
 
 def _run_md_segmentation(subs_list, srt_path_name: str, cosine_sim_func):
     """Executa a segmentação por tópicos das janelas de legenda."""
     win_size_int, adapt_thresh_float, _ = get_adaptive_config(_calc_total_seconds(subs_list[-1].end))
-    windows_list = create_adaptive_windows(subs_list, win_size_int)
-    if not windows_list: return None, None, None, None, None
-
+    result = create_adaptive_windows(subs_list, win_size_int)
+    if not result: return None, None, None, None, None, None
+    windows_list, clean_texts = result
+    if not windows_list: return None, None, None, None, None, None
     vec, tfidf_mat, lang_str, stops = _setup_vectorizer(srt_path_name, windows_list)
     breaks = detect_topic_breaks(tfidf_mat, adapt_thresh_float, cosine_sim_func)
     segs_list = assemble_segments(windows_list, breaks)
-    return segs_list, vec, tfidf_mat, lang_str, stops
+    return segs_list, vec, tfidf_mat, lang_str, stops, clean_texts
 
 
 def srt_to_md(
@@ -741,15 +751,19 @@ def srt_to_md(
     if not init_res: return None
     (pysrt, np, _, _, _, cosine_sim_func), subs_list = init_res
 
-    segs, vec, tfidf, lang, stops = _run_md_segmentation(subs_list, srt_path.name, cosine_sim_func)
+    segs, vec, tfidf, lang, stops, clean_texts = _run_md_segmentation(subs_list, srt_path.name, cosine_sim_func)
     if not segs: return None
 
     md_lines = _generate_full_md_content(
         video_title_str, video_id_str, video_date_str, subs_list[-1].end, 
-        lang, segs, vec, tfidf, stops
+        lang, segs, vec, tfidf, stops, clean_texts
     )
     md_file_path = srt_path.with_suffix(".md")
-    md_file_path.write_text("".join(md_lines), encoding="utf-8")
+    try:
+        md_file_path.write_text("".join(md_lines), encoding="utf-8")
+    except OSError as e:
+        print_warn(f"Erro ao escrever MD: {e}", indentation_prefix_str)
+        return None
     return md_file_path
 
 
@@ -925,6 +939,8 @@ def _add_utility_args(parser_obj: argparse.ArgumentParser) -> None:
     parser_obj.add_argument("--consolidar", action="store_true", help="Gera ou atualiza os volumes unificados do NotebookLM (busca na pasta atual, 'archive' e 'archives')")
     parser_obj.add_argument("--lexis-reset", action="store_true", help="Apaga os volumes do NotebookLM do canal e reprocessa")
     parser_obj.add_argument("--migrate", action="store_true", help="Adapta bancos de dados JSON antigos para a nova versão")
+    parser_obj.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, metavar="FLOAT",
+                           help=f"Sensibilidade de deteccao de topicos (0.0-1.0). Padrao: {DEFAULT_THRESHOLD}")
     parser_obj.add_argument("-v", "--version", action="version", version=f"Versão: {VERSION}")
 
 
@@ -1575,7 +1591,8 @@ def _run_deferred_md_conversion(pending_list: list[tuple], cli_args_ns: argparse
         md_path = srt_to_md(
             srt_path, vid_id_str, title_str, 
             video_date_str=format_date(date_str), 
-            threshold_float=0.3, indentation_prefix_str="    "
+            threshold_float=getattr(cli_args_ns, 'threshold', DEFAULT_THRESHOLD),
+            indentation_prefix_str="    "
         )
         
         if not cli_args_ns.keep_srt and srt_path.exists():
@@ -1612,13 +1629,14 @@ def _run_deferred_md_conversion(pending_list: list[tuple], cli_args_ns: argparse
             # Mantém o comportamento sequencial clássico para poucos arquivos
             for idx_int, item in enumerate(pending_list, start=1):
                 srt_path, vid_id_str, _, _ = item
-                prefix_str = f"{BLUE}[{idx_int:>{len(str(total_int))}}/{total_int}]{RESET}"
+                prefix_str = f"  {BLUE}[{idx_int:>{len(str(total_int))}}/{total_int}]{RESET}"
                 if not srt_path.exists(): continue
-                
-                print_dl(f"{prefix_str} {vid_id_str}{RESET}  {DIM}gerando .md{RESET}", "  ")
+                print_dl(f"{vid_id_str}{RESET}  {DIM}gerando .md{RESET}", prefix_str)
                 _, md_res_path = _convert_task(item)
                 if md_res_path:
-                    print_ok(f"MD salvo: {DIM}{md_res_path.name}{RESET}", "    ")
+                    print_ok(f"{DIM}{md_res_path.name}{RESET}", prefix_str)
+                else:
+                    print_warn(f"falha na conversão", prefix_str)
 
     except KeyboardInterrupt:
         print()
@@ -1748,7 +1766,7 @@ def _process_srt_item(srt_path: Path, idx_int: int, total_int: int, lookup_dict:
     
     print() # Quebra a linha do contador antes de iniciar a regeneração real
     print_dl(f"{srt_path.name}{RESET}  {DIM}{'re-segmentando' if md_path.exists() else 'gerando .md'}{RESET}", prefix_str)
-    res_path = srt_to_md(srt_path, vid_id_str, title_str, video_date_str=date_str, threshold_float=0.3, indentation_prefix_str="      ")
+    res_path = srt_to_md(srt_path, vid_id_str, title_str, video_date_str=date_str, threshold_float=DEFAULT_THRESHOLD, indentation_prefix_str="      ")
     
     if res_path:
         print_ok(f"salvo: {DIM}{res_path.name}{RESET}", "      ")
