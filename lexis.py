@@ -31,7 +31,17 @@ COMO USAR:
 """
 
 import argparse
+import sys
 import os
+
+# Força codificação UTF-8 no console do Windows para evitar UnicodeEncodeError com emojis
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 import re
 import shutil
 import json
@@ -245,7 +255,7 @@ def get_metadata(file_path_str: str) -> Dict[str, str]:
     internal_meta: Dict[str, str] = {}
     if file_path_str.endswith(".md"):
         try:
-            with open(file_path_str, 'r', encoding='utf-8') as f:
+            with open(file_path_str, 'r', encoding='utf-8-sig') as f:
                 # Lemos apenas o início para performance (frontmatter/header costumam estar no topo)
                 internal_meta = _extract_metadata_from_content(f.read(2048))
         except Exception:
@@ -718,7 +728,7 @@ def _parse_volume_manifest(file_path_str: str, files_set_set: Set[str], ids_set_
     Isso reconstrói o estado do sistema a partir dos arquivos físicos.
     """
     try:
-        with open(file_path_str, 'r', encoding='utf-8') as file_descriptor_obj:
+        with open(file_path_str, 'r', encoding='utf-8-sig') as file_descriptor_obj:
             for raw_line_str in file_descriptor_obj:
                 # Buscamos as etiquetas que colocamos no topo de cada bloco de vídeo
                 # EXPLICAÇÃO PARA JUNIORES:
@@ -750,7 +760,7 @@ def process_channel(channel_dir_path_str: str, channel_name_str: str, reset_mode
         _reset_channel(channel_dir_path_str, channel_name_str, paths_dict)
 
     # Busca todos os arquivos de texto (.txt, .srt, .md) na pasta do canal
-    eligible_files_list: List[str] = _get_eligible_files(channel_dir_path_str, channel_name_str)
+    eligible_files_list: List[str] = _get_eligible_files(channel_dir_path_str, channel_name_str, scan_archive_bool=reset_mode_bool)
     if not eligible_files_list:
         return
 
@@ -779,7 +789,7 @@ def _prepare_lexis_paths(channel_path_str: str, channel_name_str: str) -> Dict[s
     }
 
 
-def _get_eligible_files(channel_path_str: str, channel_name_str: str) -> List[str]:
+def _get_eligible_files(channel_path_str: str, channel_name_str: str, scan_archive_bool: bool = True) -> List[str]:
     """
     Busca arquivos de transcrição (.txt, .srt, .md) na pasta do canal e no archive.
     
@@ -799,13 +809,14 @@ def _get_eligible_files(channel_path_str: str, channel_name_str: str) -> List[st
             eligible_files_list.append(f)
             
     # 2. Busca nas pastas 'archive' e 'archives'
-    for arch_dir in ["archive", "archives"]:
-        archive_path: str = os.path.join(channel_path_str, arch_dir)
-        if os.path.exists(archive_path) and os.path.isdir(archive_path):
-            for f in os.listdir(archive_path):
-                if pattern_obj.match(f):
-                    # Mantemos o prefixo para que o processador saiba onde ler
-                    eligible_files_list.append(os.path.join(arch_dir, f))
+    if scan_archive_bool:
+        for arch_dir in ["archive", "archives"]:
+            archive_path: str = os.path.join(channel_path_str, arch_dir)
+            if os.path.exists(archive_path) and os.path.isdir(archive_path):
+                for f in os.listdir(archive_path):
+                    if pattern_obj.match(f):
+                        # Mantemos o prefixo para que o processador saiba onde ler
+                        eligible_files_list.append(os.path.join(arch_dir, f))
                 
     eligible_files_list.sort()
     return eligible_files_list
@@ -961,8 +972,12 @@ def _group_files_by_id(channel_path_str: str, files_list: List[str]) -> Dict[str
     """
     id_map_dict: Dict[str, List[str]] = {}
     for f_str in files_list:
-        meta_dict: Dict[str, str] = get_metadata(os.path.join(channel_path_str, f_str))
-        vid_id_str: str = meta_dict.get("id", f"FILE_{f_str}")
+        # Tenta extrair o ID diretamente do nome do arquivo (ultra rápido, sem I/O de disco)
+        vid_id_str: str = extract_video_id(f_str)
+        if vid_id_str == "Sem ID":
+            # Fallback seguro caso não encontre no nome
+            meta_dict: Dict[str, str] = get_metadata(os.path.join(channel_path_str, f_str))
+            vid_id_str = meta_dict.get("id", f"FILE_{f_str}")
         if vid_id_str not in id_map_dict:
             id_map_dict[vid_id_str] = []
         id_map_dict[vid_id_str].append(f_str)
@@ -1122,7 +1137,7 @@ def _process_single_file(full_path_str: str, filename_str: str, global_meta_dict
     em um arquivo, ela avisa mas não deixa o programa inteiro travar.
     """
     try:
-        with open(full_path_str, 'r', encoding='utf-8', errors='replace') as file_descriptor_obj:
+        with open(full_path_str, 'r', encoding='utf-8-sig', errors='replace') as file_descriptor_obj:
             raw_content_str: str = file_descriptor_obj.read()
         
         # Tenta pegar metadados básicos
@@ -1202,7 +1217,7 @@ def _save_volume(paths_dict: Dict[str, str], channel_name_str: str, idx_int: int
     full_content_str: str = content_str + generate_volume_index(meta_list_list)
     output_path_str: str = os.path.join(paths_dict["output"], f"{channel_name_str}-v{idx_int:03d}.txt")
     
-    with open(output_path_str, 'w', encoding='utf-8') as file_descriptor_obj:
+    with open(output_path_str, 'w', encoding='utf-8-sig') as file_descriptor_obj:
         file_descriptor_obj.write(full_content_str)
     print_ok(f"Volume {idx_int} finalizado ({len(full_content_str):,} caracteres)")
 
@@ -1247,10 +1262,10 @@ def _scan_for_channel_files(dir_path_str: str) -> List[str]:
     se estamos 'dentro' da casa de um canal.
     """
     dir_name_str: str = os.path.basename(os.path.abspath(dir_path_str))
+    pattern_obj = re.compile(rf"^{re.escape(dir_name_str)}[-]+[A-Za-z0-9_-]{{9,15}}(?:-[a-zA-Z0-9-]+)?\.(txt|srt|md)$")
     return [
         f for f in os.listdir(dir_path_str) 
-        if f.endswith(('.txt', '.srt', '.md')) and 
-        not re.match(rf"^{re.escape(dir_name_str)}-v\d{{3}}\.txt$", f)
+        if pattern_obj.match(f)
     ]
 
 

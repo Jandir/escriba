@@ -25,6 +25,26 @@ com nomes reveladores, sem aspas enigmáticas e com sufixos tipados
 
 import os
 import sys
+import signal
+
+# Força codificação UTF-8 no console do Windows para evitar UnicodeEncodeError com emojis
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+sys._escriba_interrupted = False
+
+def setup_sigint_handler() -> None:
+    """Registra um tratador de sinal customizado para CTRL+C para definir a flag global."""
+    def handler(signum, frame):
+        sys._escriba_interrupted = True
+        raise KeyboardInterrupt
+        
+    signal.signal(signal.SIGINT, handler)
+
 import subprocess
 import warnings
 from pathlib import Path
@@ -82,8 +102,7 @@ import requests
 
 from collections import Counter
 
-VERSION = "2.6.7"
-DEFAULT_THRESHOLD = 0.3
+VERSION = "2.7.0"
 
 _script_dir = Path(__file__).parent.resolve()
 
@@ -99,6 +118,7 @@ class SessionConfig:
     discovered_uploader_id: Optional[str] = None
     provider: str = "youtube" # 'youtube' ou 'vimeo'
     disk_files_cache: dict[str, list[str]] = None  # Cache indexado por video_id: { "vid_id": ["file1.srt", "file1.md"] }
+    browser_name: str = "firefox"
 
 
 @dataclass
@@ -120,7 +140,7 @@ def _extract_video_meta_cli(url_str: str, cmd_list: list[str], cookie_args_list:
     """Executa comando yt-dlp para extrair metadados de vídeo único."""
     meta_cmd_list: list[str] = cmd_list + cookie_args_list + ["--dump-json", "--skip-download", url_str]
     try:
-        proc_res_obj = subprocess.run(meta_cmd_list, capture_output=True, text=True, timeout=15)
+        proc_res_obj = subprocess.run(meta_cmd_list, capture_output=True, text=True, encoding="utf-8", timeout=15)
         if proc_res_obj.stdout:
             meta_dict: dict = json.loads(proc_res_obj.stdout)
             # Para o Vimeo, o uploader_id pode estar em outros campos, mas o yt-dlp costuma normalizar
@@ -163,7 +183,7 @@ def _extract_playlist_meta_cli(url_str: str, cmd_list: list[str], cookie_args_li
     """Executa comando yt-dlp para extrair metadados de playlist."""
     meta_cmd_list = cmd_list + cookie_args_list + ["--dump-json", "--flat-playlist", "--playlist-end", "1", "--ignore-errors", url_str]
     try:
-        proc_res = subprocess.run(meta_cmd_list, capture_output=True, text=True, timeout=15)
+        proc_res = subprocess.run(meta_cmd_list, capture_output=True, text=True, encoding="utf-8", timeout=15)
         if proc_res.stdout:
             meta_dict = json.loads(proc_res.stdout.splitlines()[0])
             return meta_dict.get("uploader_id") or meta_dict.get("uploader"), meta_dict.get("channel_id"), meta_dict.get("uploader")
@@ -575,21 +595,47 @@ def get_provider(url: str) -> str:
         return "vimeo"
     return "youtube"
 
+def yaml_safe(template) -> str:
+    """
+    Função de Tag (PEP 750) para renderizar cabeçalhos YAML com segurança.
+    Escapa aspas duplas internas de valores que estão entre aspas duplas no template.
+    """
+    res = []
+    for i, interp in enumerate(template.interpolations):
+        prefix = template.strings[i]
+        res.append(prefix)
+        val = str(interp.value)
+        if prefix.endswith('"') and template.strings[i+1].startswith('"'):
+            val = val.replace('"', '\\"')
+        res.append(val)
+    res.append(template.strings[-1])
+    return "".join(res)
+
 def generate_md_header(video_title: str, video_id: str, video_date: str, duration_str: str, lang_code: str, version: str) -> list[str]:
-    """Gera o cabeçalho YAML e título do arquivo Markdown."""
+    """Gera o cabeçalho YAML e título do arquivo Markdown usando t-strings."""
     provider = get_provider(video_id)
     if provider == "vimeo":
         url = f"https://vimeo.com/{video_id}"
     else:
         url = f"https://youtube.com/watch?v={video_id}"
         
-    return [
-        "---\n", f"title: \"{video_title}\"\n", f"video_id: \"{video_id}\"\n",
-        f"url: \"{url}\"\n", f"date: \"{video_date}\"\n",
-        f"duration: \"{duration_str}\"\n", f"language: \"{lang_code}\"\n", f"source: \"Escriba v{version}\"\n", "---\n\n",
-        f"# {video_title}\n\n", f"> **Data:** {video_date} · **Duração:** {duration_str} · **Idioma:** {lang_code}  \n",
-        f"> 🔗 [{url}]({url})\n\n"
-    ]
+    header_content = yaml_safe(t"""---
+title: "{video_title}"
+video_id: "{video_id}"
+url: "{url}"
+date: "{video_date}"
+duration: "{duration_str}"
+language: "{lang_code}"
+source: "Escriba v{version}"
+---
+
+# {video_title}
+
+> **Data:** {video_date} · **Duração:** {duration_str} · **Idioma:** {lang_code}  
+> 🔗 [{url}]({url})
+
+""")
+    return [line + "\n" for line in header_content.splitlines()]
 
 def _dedup_lines(lines: list[str]) -> list[str]:
     """Remove roll-up duplicatas: pula linha se uma é prefixo de palavras da outra."""
@@ -759,11 +805,7 @@ def srt_to_md(
         lang, segs, vec, tfidf, stops, clean_texts
     )
     md_file_path = srt_path.with_suffix(".md")
-    try:
-        md_file_path.write_text("".join(md_lines), encoding="utf-8")
-    except OSError as e:
-        print_warn(f"Erro ao escrever MD: {e}", indentation_prefix_str)
-        return None
+    md_file_path.write_text("".join(md_lines), encoding="utf-8-sig")
     return md_file_path
 
 
@@ -799,6 +841,36 @@ def _find_and_select_subtitle(cwd_path: Path, channel_dir_name: str, video_id: s
     """Busca arquivos de legenda e resolve duplicatas."""
     pattern_str = str(cwd_path / f"{channel_dir_name}-{video_id}*.srt")
     matches_list = glob.glob(pattern_str)
+    
+    if not matches_list:
+        # Fallback para o caso de o nome do canal conter pontos e ter sido truncado pelo yt-dlp
+        prefix_base = channel_dir_name.split('.')[0]
+        fallback_pattern = str(cwd_path / f"{prefix_base}*.srt")
+        fallback_matches = glob.glob(fallback_pattern)
+        valid_fallbacks = [f for f in fallback_matches if "-" not in Path(f).name]
+        
+        if valid_fallbacks:
+            for f_str in valid_fallbacks:
+                old_path = Path(f_str)
+                # Extrai a extensão e sufixo de idioma, ex: "pt-orig.srt" de "andrea.pt-orig.srt"
+                suffix = old_path.name[len(prefix_base):].lstrip('.')
+                if not suffix:
+                    suffix = "srt"
+                
+                if suffix.endswith(".srt"):
+                    lang_part = suffix[:-4]
+                    new_name = f"{channel_dir_name}-{video_id}-{lang_part}.srt" if lang_part else f"{channel_dir_name}-{video_id}.srt"
+                else:
+                    new_name = f"{channel_dir_name}-{video_id}.srt"
+                
+                new_path = old_path.parent / new_name
+                try:
+                    old_path.rename(new_path)
+                    print_info(f"Legenda órfã recuperada e renomeada: {DIM}{old_path.name} → {new_name}{RESET}", indent)
+                    matches_list.append(str(new_path))
+                except Exception as e:
+                    print_warn(f"Erro ao renomear legenda órfã {old_path.name}: {e}", indent)
+
     if not matches_list: return None
 
     if len(matches_list) > 1:
@@ -810,11 +882,93 @@ def _find_and_select_subtitle(cwd_path: Path, channel_dir_name: str, video_id: s
     return Path(matches_list[0])
 
 
+def convert_vtt_to_srt(vtt_path: Path) -> Path:
+    """Converte um arquivo WebVTT (.vtt) para SubRip (.srt) de forma robusta e nativa."""
+    srt_path = vtt_path.with_suffix(".srt")
+    content = vtt_path.read_text(encoding="utf-8")
+    
+    # Normaliza quebras de linha
+    content = content.replace("\r\n", "\n")
+    
+    # Remove o cabeçalho WEBVTT
+    if content.startswith("WEBVTT"):
+        content = re.sub(r"^WEBVTT.*?\n\n", "", content, flags=re.DOTALL)
+    
+    blocks = content.split("\n\n")
+    srt_blocks = []
+    block_index = 1
+    
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+            
+        lines = block.split("\n")
+        
+        # Localiza a linha do timestamp
+        time_line_idx = -1
+        for i, line in enumerate(lines):
+            if "-->" in line:
+                time_line_idx = i
+                break
+                
+        if time_line_idx == -1:
+            continue  # Não é um bloco de legenda válido
+            
+        time_line = lines[time_line_idx]
+        text_lines = lines[time_line_idx + 1:]
+        
+        # Corrige o timestamp: troca pontos por vírgulas nos milissegundos e remove propriedades extras do VTT
+        match = re.search(r"(\d{2}:\d{2}:\d{2})[.,](\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2})[.,](\d{3})", time_line)
+        if not match:
+            # Tenta sem horas (MM:SS.mmm)
+            match = re.search(r"(\d{2}:\d{2})[.,](\d{3})\s*-->\s*(\d{2}:\d{2})[.,](\d{3})", time_line)
+            if match:
+                t1, m1, t2, m2 = match.groups()
+                srt_time_line = f"00:{t1},{m1} --> 00:{t2},{m2}"
+            else:
+                continue
+        else:
+            t1, m1, t2, m2 = match.groups()
+            srt_time_line = f"{t1},{m1} --> {t2},{m2}"
+            
+        srt_block = f"{block_index}\n{srt_time_line}\n" + "\n".join(text_lines)
+        srt_blocks.append(srt_block)
+        block_index += 1
+        
+    srt_path.write_text("\n\n".join(srt_blocks) + "\n", encoding="utf-8")
+    return srt_path
+
+
+def _auto_convert_vtt_to_srt(cwd_path: Path, channel_dir_name: str, video_id_str: str, indent_str: str) -> None:
+    """Procura por arquivo .vtt correspondente e converte para .srt se encontrado."""
+    pattern_str = str(cwd_path / f"{channel_dir_name}-{video_id_str}*.vtt")
+    matches_list = glob.glob(pattern_str)
+    
+    if not matches_list:
+        # Fallback para o caso de o nome do canal conter pontos e ter sido truncado pelo yt-dlp
+        prefix_base = channel_dir_name.split('.')[0]
+        fallback_pattern = str(cwd_path / f"{prefix_base}*.vtt")
+        fallback_matches = glob.glob(fallback_pattern)
+        matches_list = [f for f in fallback_matches if "-" not in Path(f).name]
+        
+    for vtt_path_str in matches_list:
+        vtt_path = Path(vtt_path_str)
+        try:
+            srt_path = convert_vtt_to_srt(vtt_path)
+            print_info(f"Convertido WebVTT para SRT: {DIM}{srt_path.name}{RESET}", indent_str)
+            vtt_path.unlink()
+        except Exception as e:
+            print_warn(f"Falha ao converter {vtt_path.name} para SRT: {e}", indent_str)
+
+
 def cleanup_subtitles(
     cwd_path: Path, channel_dir_name: str, video_id_str: str, video_title_str: str = "Vídeo Sem Título",
     convert_srt_to_md_bool: bool = False, keep_srt_bool: bool = False, indent_str: str = "  ",
 ) -> tuple[bool, Path | None]:
     """Limpa e organiza arquivos de legenda baixados."""
+    _auto_convert_vtt_to_srt(cwd_path, channel_dir_name, video_id_str, indent_str)
+    
     target_path = _find_and_select_subtitle(cwd_path, channel_dir_name, video_id_str, indent_str)
     if not target_path: return False, None
 
@@ -865,7 +1019,14 @@ def _extract_meta_to_dict(meta_dict: dict, video_dict: dict):
 def harvest_and_delete_info_json(cwd_path: Path, channel_dir_name: str, video_id: str, video_dict: dict) -> bool:
     """Colhe metadados do arquivo .info.json e o remove."""
     info_path = cwd_path / f"{channel_dir_name}-{video_id}.info.json"
-    if not info_path.exists(): return False
+    if not info_path.exists():
+        # Fallback para o caso de o nome do canal conter pontos e ter sido truncado pelo yt-dlp
+        prefix_base = channel_dir_name.split('.')[0]
+        fallback_path = cwd_path / f"{prefix_base}.info.json"
+        if fallback_path.exists():
+            info_path = fallback_path
+        else:
+            return False
     
     harvested_flag = False
     try:
@@ -923,7 +1084,8 @@ def _add_behavior_args(parser_obj: argparse.ArgumentParser) -> None:
     """Adiciona argumentos de comportamento do processamento."""
     parser_obj.add_argument("-d", "--date", default="", metavar="DATA", help="Data limite (posterior a). Formato: YYYYMMDD (ex: 20260101)")
     parser_obj.add_argument("-f", "--fast", action="store_true", help="Modo rápido: pula o tempo de espera entre downloads")
-    parser_obj.add_argument("-rc", "--refresh-cookies", action="store_true", help="Força a extração de novos cookies do Chrome (apaga cookies.txt existente)")
+    parser_obj.add_argument("-rc", "--refresh-cookies", action="store_true", help="Força a extração de novos cookies do navegador (apaga cookies.txt existente)")
+    parser_obj.add_argument("-b", "--browser", default="firefox", choices=["chrome", "firefox", "edge", "brave", "opera", "vivaldi", "safari"], help="Navegador do qual extrair os cookies. Padrão: firefox")
     parser_obj.add_argument("--full-scan", action="store_true", help="Desativa o Smart Sync e força a listagem completa de todos os vídeos do canal")
     parser_obj.add_argument("--ignore-metadata", action="store_true", help="Pula a auto-recuperação de datas e títulos ausentes no histórico JSON")
     parser_obj.add_argument("--retry-nosub", action="store_true", help="Tenta baixar novamente as legendas de vídeos marcados como 'sem legenda'")
@@ -1060,9 +1222,62 @@ def _print_session_info(cli_args: argparse.Namespace, latest_json_path: Path | N
     if latest_json_path: print_info(f"Auto-detecção via {latest_json_path.name}")
 
 
+def _recover_orphaned_files(cwd_path: Path, channel_dir_name: str) -> None:
+    """Localiza arquivos .info.json órfãos (sem ID no nome), lê seu ID interno e renomeia
+    todos os arquivos relacionados (.info.json, .srt, .vtt) para o formato padrão.
+    """
+    prefix_base = channel_dir_name.split('.')[0]
+    
+    # Procura por prefix_base.info.json
+    orphaned_info_path = cwd_path / f"{prefix_base}.info.json"
+    if not orphaned_info_path.exists():
+        return
+        
+    try:
+        with open(orphaned_info_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            video_id = data.get("id")
+            
+        if not video_id:
+            return
+            
+        # Renomeia o .info.json
+        new_info_name = f"{channel_dir_name}-{video_id}.info.json"
+        new_info_path = cwd_path / new_info_name
+        orphaned_info_path.rename(new_info_path)
+        print_info(f"Metadados órfãos recuperados: {DIM}{orphaned_info_path.name} → {new_info_name}{RESET}")
+        
+        # Agora busca e renomeia os arquivos de legenda correspondentes (.srt ou .vtt)
+        # Qualquer arquivo que comece com prefix_base + "." e termine com .srt ou .vtt
+        # e que não contenha hífen no nome.
+        for f in cwd_path.iterdir():
+            if f.is_file() and f.name.startswith(f"{prefix_base}.") and f.suffix in (".srt", ".vtt"):
+                if extract_video_id(f.name) == "Sem ID":
+                    # Ex: andrea.pt-orig.srt -> pt-orig
+                    suffix = f.name[len(prefix_base):].lstrip('.')
+                    if suffix.endswith(".srt"):
+                        lang_part = suffix[:-4]
+                        ext = "srt"
+                    else:
+                        lang_part = suffix[:-4]
+                        ext = "vtt"
+                        
+                    if lang_part:
+                        new_sub_name = f"{channel_dir_name}-{video_id}-{lang_part}.{ext}"
+                    else:
+                        new_sub_name = f"{channel_dir_name}-{video_id}.{ext}"
+                        
+                    new_sub_path = cwd_path / new_sub_name
+                    f.rename(new_sub_path)
+                    print_info(f"Legenda órfã recuperada: {DIM}{f.name} → {new_sub_name}{RESET}")
+    except Exception as e:
+        print_warn(f"Erro ao recuperar arquivos órfãos para {channel_dir_name}: {e}")
+
+
 def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
     """Etapa 1: configura tudo que precisamos antes de começar."""
     cwd_path = Path.cwd()
+    _recover_orphaned_files(cwd_path, cwd_path.name)
     script_dir_path, yt_dlp_cmd_list = youtube.setup_environment()
     
     latest_json_path = _auto_detect_channel(cwd_path, cli_args) if not cli_args.canal else None
@@ -1080,14 +1295,15 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
         script_dir_path=script_dir_path, yt_dlp_cmd_list=yt_dlp_cmd_list,
         channel_input_url_or_handle=cli_args.canal, channel_url=url_str,
         discovered_uploader_id=_resolve_uploader_id(cli_args.canal, url_str),
-        provider=get_provider(url_str)
+        provider=get_provider(url_str),
+        browser_name=getattr(cli_args, "browser", "firefox")
     )
 
 def _warm_up_cookies(session_config: SessionConfig, cookie_args_list: list[str]) -> list[str]:
     """Realiza warm-up para extrair cookies do navegador e os filtra."""
     cookies_txt_path = session_config.cwd_path / "cookies.txt"
     if not cookies_txt_path.is_file():
-        print_warn("Executando warm-up para extrair cookies do Chrome silenciosamente...")
+        print_warn(f"Executando warm-up para extrair cookies do {session_config.browser_name.capitalize()} silenciosamente...")
         subprocess.run(
             session_config.yt_dlp_cmd_list + cookie_args_list + ["--dump-json", "--playlist-items", "0", session_config.channel_url],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -1100,9 +1316,17 @@ def _warm_up_cookies(session_config: SessionConfig, cookie_args_list: list[str])
         else:
             filter_youtube_cookies(cookies_txt_path)
             print_info("Cookies filtrados limitados ao YouTube (trackers removidos).")
-        return configure_cookies(session_config.cwd_path, session_config.script_dir_path, False, silent_bool=True)
+        return configure_cookies(session_config.cwd_path, session_config.script_dir_path, False, silent_bool=True, browser_str=session_config.browser_name)
     
-    print_err("Falha na extração de cookies do navegador.")
+    print_err(f"Falha na extração de cookies do navegador '{session_config.browser_name}'.")
+    if sys.platform.startswith("win"):
+        print_warn("Dicas para Windows:")
+        print_warn("1. Certifique-se de que o navegador selecionado está totalmente fechado antes de iniciar.")
+        print_warn("2. Se estiver usando o Chrome 127+ (ou Edge equivalente), a proteção 'Appbound Encryption'")
+        print_warn("   do Windows pode impedir a extração automática. Soluções:")
+        print_warn("   * Recomendada: Instale a extensão 'Get cookies.txt LOCALLY' no Chrome, exporte")
+        print_warn("     os cookies em formato Netscape e salve como 'cookies.txt' na pasta deste canal.")
+        print_warn("   * Alternativa: Use outro navegador (ex: Firefox) com 'escriba -b firefox @canal'.")
     return cookie_args_list
 
 
@@ -1111,7 +1335,7 @@ def init_auth_and_language(
 ) -> tuple[list[str], str]:
     """Etapa 2: configura autenticação e idioma."""
     print_section("Autenticação")
-    cookies_list = configure_cookies(session_config.cwd_path, session_config.script_dir_path, force_refresh_flag)
+    cookies_list = configure_cookies(session_config.cwd_path, session_config.script_dir_path, force_refresh_flag, browser_str=session_config.browser_name)
 
     print_section("Idioma")
     lang_str = _detect_and_report_language(session_config, cookies_list, language_arg_str)
@@ -1131,7 +1355,7 @@ def _ensure_global_cookies(session_config: SessionConfig, cli_args_ns: argparse.
     
     # Se o arquivo existe e não foi solicitado refresh, apenas carregamos silenciosamente
     if cookies_path.is_file() and not cli_args_ns.refresh_cookies:
-        return configure_cookies(session_config.cwd_path, session_config.script_dir_path, False, silent_bool=True)
+        return configure_cookies(session_config.cwd_path, session_config.script_dir_path, False, silent_bool=True, browser_str=session_config.browser_name)
 
     # Caso contrário, realiza a autenticação completa (que pode disparar extração do navegador)
     print_section("Autenticação Global")
@@ -1401,6 +1625,8 @@ def _run_video_download_loop(
     stats_list, pending_md, dirty, interrupted = [0, 0, 0], [], [0], False
     try:
         for idx_int, video_dict in enumerate(working_list, start=1):
+            if getattr(sys, "_escriba_interrupted", False):
+                raise KeyboardInterrupt
             res = _process_loop_item(idx_int, video_dict, conf, cookies, lang, args, pending_md, dirty, len(working_list))
             _update_loop_stats(res, stats_list)
             _check_auto_save(json_path, full_list, lang, conf, dirty)
@@ -1469,6 +1695,9 @@ def _download_and_process_single(
         download_video_only_hd=getattr(args, "download_video", False)
     )
     
+    if getattr(sys, "_escriba_interrupted", False):
+        raise KeyboardInterrupt
+        
     _update_metadata_from_json(conf, video_dict, dirty)
 
     if exit_code == 0:
@@ -1846,7 +2075,7 @@ def _print_upgrade_header(cwd_path: Path, total_int: int) -> None:
 def _upgrade_single_md(md_path: Path, idx_int: int, total_int: int, counts_list: list[int]) -> None:
     """Realiza o upgrade de um único arquivo MD."""
     prefix_str = f"  {BLUE}[{idx_int:>{len(str(total_int))}}/{total_int}]{RESET}"
-    content_str = md_path.read_text(encoding="utf-8")
+    content_str = md_path.read_text(encoding="utf-8-sig")
     
     if content_str.startswith("---"):
         counts_list[1] += 1
@@ -1866,7 +2095,7 @@ def _save_upgraded_md(md_path: Path, content_str: str, meta_dict: dict, prefix_s
     body_str = _extract_md_body(content_str)
     
     try:
-        md_path.write_text(header_str + body_str, encoding="utf-8")
+        md_path.write_text(header_str + body_str, encoding="utf-8-sig")
         print_ok(f"{md_path.name}  {DIM}cabeçalho atualizado{RESET}", prefix_str)
         counts_list[0] += 1
     except Exception as e_obj:
@@ -1980,7 +2209,7 @@ def _run_direct_video_download_flow(cli_args_ns: argparse.Namespace) -> None:
     script_dir_path, yt_dlp_cmd_list = youtube.setup_environment()
     provider_str = get_provider(url_str)
     
-    cookies_list = configure_cookies(Path.cwd(), script_dir_path, cli_args_ns.refresh_cookies, silent_bool=False)
+    cookies_list = configure_cookies(Path.cwd(), script_dir_path, cli_args_ns.refresh_cookies, silent_bool=False, browser_str=getattr(cli_args_ns, "browser", "firefox"))
     _filter_cookies_if_present(Path.cwd(), provider_str)
     
     print_info(f"Iniciando download de vídeo direto em Full HD...")
@@ -1992,6 +2221,7 @@ def _run_direct_video_download_flow(cli_args_ns: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    setup_sigint_handler()
     print_header(VERSION)
     cli_args_ns = parse_args()
     _normalize_canal_arg(cli_args_ns)
@@ -2215,6 +2445,7 @@ def _finish_session_flow(res_tuple: tuple, cli_args_ns: argparse.Namespace, cwd_
 if __name__ == "__main__":
     try:
         main()
+        sys.exit(0)
     except KeyboardInterrupt:
         print()
         print_warn(f"Interrompido pelo usuário (Ctrl+C).  {DIM}Saindo...{RESET}")

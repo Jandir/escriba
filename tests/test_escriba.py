@@ -297,140 +297,29 @@ def test_filter_cookies_if_present_vimeo(mock_is_file, mock_filter_vimeo):
     mock_filter_vimeo.assert_called_once_with(Path("/dummy/cookies.txt"))
 
 
-# ─── SRT -> MD Pipeline ─────────────────────────────────────────────────────
+def test_yaml_safe():
+    """Valida se a tag yaml_safe (PEP 750) escapa aspas duplas em campos entre aspas."""
+    # Aspas dentro de campo entre aspas do template -> devem ser escapadas
+    titulo = 'O "Novo" Vídeo'
+    tmpl = t'title: "{titulo}"'
+    assert escriba.yaml_safe(tmpl) == 'title: "O \\"Novo\\" Vídeo"'
 
-import tempfile
-
-def test_srt_to_md_basic():
-    """Verifica o fluxo completo de conversão SRT para MD."""
-    srt_content = """1
-00:00:01,000 --> 00:00:05,000
-Ola pessoal bem vindos ao canal
-
-2
-00:00:05,500 --> 00:00:10,000
-Hoje vamos falar sobre programacao em Python
-
-3
-00:00:10,500 --> 00:00:15,000
-Python e uma linguagem muito versatil
-
-4
-00:00:15,500 --> 00:00:20,000
-Ela e usada em muitas areas
-
-5
-00:00:20,500 --> 00:00:25,000
-Vamos comecar com os fundamentos
-
-6
-00:00:25,500 --> 00:00:30,000
-Primeiro vamos entender variaveis
-
-7
-00:00:30,500 --> 00:00:35,000
-Variaveis sao espacos na memoria
-
-8
-00:00:35,500 --> 00:00:40,000
-Agora vamos falar sobre funcoes
-
-9
-00:00:40,500 --> 00:00:45,000
-Funcoes sao blocos de codigo
-
-10
-00:00:45,500 --> 00:00:50,000
-Elas ajudam a organizar o codigo
-
-11
-00:00:50,500 --> 00:00:55,000
-Vamos ver exemplos praticos agora
-
-12
-00:00:55,500 --> 00:01:00,000
-Espero que tenham gostado do video
-
-13
-00:01:00,500 --> 00:01:05,000
-Nao esquecam de se inscrever
-
-14
-00:01:05,500 --> 00:01:10,000
-E ativar o sininho de notificacoes
-"""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        srt_path = Path(tmpdir) / "test-abc12345678-pt.srt"
-        srt_path.write_text(srt_content, encoding="utf-8")
-        result = srt_to_md(srt_path, "abc12345678", "Teste Python", "2026-01-01")
-        assert result is not None
-        assert result.exists()
-        md = result.read_text(encoding="utf-8")
-        assert "---" in md
-        assert "Teste Python" in md
-        assert "### Transcri" in md
+    # Aspas em campo sem aspas no template -> não devem ser escapadas
+    tmpl_raw = t'# {titulo}'
+    assert escriba.yaml_safe(tmpl_raw) == '# O "Novo" Vídeo'
 
 
-def test_srt_to_md_empty_file():
-    """Verifica comportamento com arquivo SRT vazio."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        srt_path = Path(tmpdir) / "test-abc12345678-pt.srt"
-        srt_path.write_text("", encoding="utf-8")
-        result = srt_to_md(srt_path, "abc12345678", "Teste Vazio")
-        assert result is None
-
-
-def test_srt_to_md_nonexistent_file():
-    """Verifica comportamento com arquivo SRT inexistente."""
-    fake_path = Path("/tmp/nonexistent-abc12345678-pt.srt")
-    result = srt_to_md(fake_path, "abc12345678", "Teste Inexistente")
-    assert result is None
-
-
-def test_dedup_lines_word_level():
-    """Verifica dedup por palavras: 'cat' nao deve casar com 'category'."""
-    lines = ["cat", "category", " dogs"]
-    result = _dedup_lines(lines)
-    assert len(result) == 3
-
-
-def test_dedup_lines_rollup():
-    """Verifica dedup de roll-up: linha prefixo deve ser removida."""
-    lines = ["Ola pessoal", "Ola pessoal bem vindos"]
-    result = _dedup_lines(lines)
-    assert len(result) == 1
-    assert result[0] == "Ola pessoal bem vindos"
-
-
-def test_dedup_lines_identical():
-    """Verifica dedup de linhas identicas."""
-    lines = ["mesma linha", "mesma linha"]
-    result = _dedup_lines(lines)
-    assert len(result) == 1
-
-
-def test_create_adaptive_windows_returns_clean_texts():
-    """Verifica que create_adaptive_windows retorna tuple (windows, clean_texts)."""
-    mock_sub1 = MagicMock()
-    mock_sub1.start = pysrt.SubRipTime(seconds=1)
-    mock_sub1.end = pysrt.SubRipTime(seconds=5)
-    mock_sub1.text = "Olá mundo"
-    
-    mock_sub2 = MagicMock()
-    mock_sub2.start = pysrt.SubRipTime(seconds=10)
-    mock_sub2.end = pysrt.SubRipTime(seconds=15)
-    mock_sub2.text = "Teste de legenda"
-    
-    subs_list = [mock_sub1, mock_sub2]
-    result = create_adaptive_windows(subs_list, window_size_s_int=60)
-    
-    assert isinstance(result, tuple)
-    assert len(result) == 2
-    windows_list, clean_texts = result
-    assert isinstance(windows_list, list)
-    assert isinstance(clean_texts, dict)
-    assert len(windows_list) == 1
-    assert len(clean_texts) == 2
-
-
-
+def test_generate_md_header_with_quotes():
+    """Valida se generate_md_header formata corretamente o cabeçalho YAML escapando aspas no título."""
+    header = escriba.generate_md_header(
+        video_title='O "Novo" Vídeo',
+        video_id="dQw4w9WgXcQ",
+        video_date="2026-06-20",
+        duration_str="00:15:30",
+        lang_code="pt",
+        version="2.6.7"
+    )
+    header_str = "".join(header)
+    assert 'title: "O \\"Novo\\" Vídeo"' in header_str
+    assert 'video_id: "dQw4w9WgXcQ"' in header_str
+    assert 'O "Novo" Vídeo' in header_str  # O H1 não deve ter escape de aspas

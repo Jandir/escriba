@@ -74,7 +74,7 @@ def detect_language(
     
     detected_langs_list: List[str] = []
     try:
-        process_obj = subprocess.run(list_cmd, capture_output=True, text=True, timeout=30)
+        process_obj = subprocess.run(list_cmd, capture_output=True, text=True, encoding="utf-8", timeout=30)
         if process_obj.returncode == 0:
             for line_str in process_obj.stdout.splitlines():
                 try:
@@ -85,7 +85,7 @@ def detect_language(
                         meta_cmd = yt_dlp_cmd_list + cookie_args_list + [
                             "--dump-json", "--skip-download", f"https://vimeo.com/{v_id_str}"
                         ]
-                        meta_res_obj = subprocess.run(meta_cmd, capture_output=True, text=True, timeout=20)
+                        meta_res_obj = subprocess.run(meta_cmd, capture_output=True, text=True, encoding="utf-8", timeout=20)
                         if meta_res_obj.returncode == 0:
                             meta_data_dict = json.loads(meta_res_obj.stdout)
                             subs_dict = meta_data_dict.get("subtitles", {})
@@ -138,7 +138,7 @@ def generate_fast_list_json(
     
     try:
         process_obj = subprocess.Popen(
-            cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+            cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8"
         )
         
         if process_obj.stdout:
@@ -193,6 +193,17 @@ def generate_fast_list_json(
         return []
 
 
+def escriba_progress_hook(d):
+    """Callback invocado periodicamente pelo yt-dlp durante o download de arquivos.
+    No Windows, o interpretador Python fica bloqueado durante chamadas de rede C (I/O).
+    Executar código Python (como esta função) força o interpretador a checar por sinais
+    pendentes (como SIGINT/Ctrl+C) e disparar a KeyboardInterrupt imediatamente.
+    """
+    import sys
+    if getattr(sys, "_escriba_interrupted", False):
+        raise KeyboardInterrupt
+
+
 def download_video(
     yt_dlp_cmd_list: List[str], 
     cookie_args_list: List[str], 
@@ -214,7 +225,7 @@ def download_video(
     """
     from youtube import _normalize_lang_pattern
     
-    output_template_str: str = f"{folder_name_str}-{video_id_str}"
+    output_template_str: str = f"{folder_name_str}-{video_id_str}.%(ext)s"
     vimeo_url = f"https://vimeo.com/{video_id_str}"
     
     base_args = yt_dlp_cmd_list[3:] + cookie_args_list + [
@@ -286,6 +297,7 @@ def download_video(
                 break
                 
         download_opts = dict(parsed_opts)
+        download_opts['progress_hooks'] = [escriba_progress_hook]
         
         if chosen_lang:
             download_opts.update({
@@ -320,6 +332,8 @@ def download_video(
             
         return 0
     except Exception as error_obj:
+        if getattr(sys, "_escriba_interrupted", False):
+            raise KeyboardInterrupt
         print_warn(f"Erro ao baixar vídeo Vimeo {video_id_str}: {error_obj}. Tentando renovar cookies...")
         try:
             new_cookies_args_list: List[str] = _refresh_cookies_on_error(
@@ -374,6 +388,7 @@ def download_video(
                     break
                     
             download_opts_retry = dict(parsed_opts_retry)
+            download_opts_retry['progress_hooks'] = [escriba_progress_hook]
             if chosen_lang:
                 download_opts_retry.update({
                     'writesubtitles': not is_auto,
@@ -405,6 +420,8 @@ def download_video(
                 ydl_dl.process_info(info)
             return 0
         except Exception as retry_error:
+            if getattr(sys, "_escriba_interrupted", False):
+                raise KeyboardInterrupt
             print_err(f"Erro crítico Vimeo após cookies no vídeo {video_id_str}: {retry_error}")
             return 1
 

@@ -393,6 +393,19 @@ def _merge_playlists(existing_dict: Dict[str, Any], new_playlists_list: List[str
             existing_dict["playlists"].append(playlist_id_str)
 
 
+def _safe_replace(temp_path: Path, target_path: Path, max_retries: int = 5, delay: float = 0.2) -> None:
+    """Substitui o arquivo de destino pelo temporário de forma segura com retentativas no Windows."""
+    import time
+    for attempt in range(1, max_retries + 1):
+        try:
+            temp_path.replace(target_path)
+            return
+        except (PermissionError, OSError) as e:
+            if attempt == max_retries:
+                raise e
+            time.sleep(delay)
+
+
 def _write_json_atomically(json_path: Path, output_data_dict: Dict[str, Any]) -> None:
     """
     Grava o arquivo JSON usando a técnica clássica de 'Escrita Atômica'.
@@ -420,7 +433,7 @@ def _write_json_atomically(json_path: Path, output_data_dict: Dict[str, Any]) ->
             json.dump(output_data_dict, file_descriptor_obj, indent=4, ensure_ascii=False)
             
         # Faz a troca atômica no sistema de arquivos
-        temp_file_path.replace(target_write_path)
+        _safe_replace(temp_file_path, target_write_path)
         _cleanup_legacy_json(json_path, target_write_path)
     except Exception as error_obj:
         print_warn(f"Erro ao salvar histórico de forma segura: {error_obj}")
@@ -731,7 +744,7 @@ def _atomic_json_dump(json_path: Path, data_dict: Dict[str, Any]) -> bool:
         with open(temp_file_path, "w", encoding="utf-8") as file_descriptor_obj:
             json.dump(data_dict, file_descriptor_obj, indent=4, ensure_ascii=False)
             
-        temp_file_path.replace(json_path)
+        _safe_replace(temp_file_path, json_path)
         print_ok(f"Canal registrado no banco de dados.")
         return True
     except Exception as error_obj:
