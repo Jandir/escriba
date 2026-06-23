@@ -4,3 +4,6 @@
 ## 2026-03-02 - Object instantiation vs primitive strings in hot paths
 **Learning:** Instantiating `Path` objects in Python just to use `.name` inside functions called repeatedly inside tight loops adds measurable performance overhead. Pre-compiling `re` regular expressions into global variables also significantly speeds up function calls compared to calling `re.sub` directly each time.
 **Action:** When working on frequently-called string processing functions, prefer native string primitives and `os.path` functions like `os.path.basename` to avoid object instantiation overhead. Always globally pre-compile regexes.
+## 2026-03-03 - Avoid regex for simple whitespace normalization
+**Learning:** Python's native `str.split()` method with no arguments automatically splits strings on arbitrary-length contiguous whitespace (spaces, tabs, newlines) and discards empty strings. In hot paths processing text (like parsing SRT line-by-line), using `re.sub(r'\s+', ' ', text).split()` is redundant and significantly slower than simply calling `text.split()`. Likewise, `" ".join(text.split())` is a ~10x faster way to normalize spacing than `re.sub(r' {2,}', ' ', text)`.
+**Action:** When performing whitespace normalization or tokenization in Python hot paths, prefer native `str.split()` and `" ".join(str.split())` instead of importing `re` and using regex substitutions.
