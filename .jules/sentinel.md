@@ -1,0 +1,4 @@
+## 2026-03-03 - Cross-domain cookie leakage via loose substring matching
+**Vulnerability:** Loose substring matching `in` was used to filter Netscape HTTP Cookie files (e.g. `if "youtube.com" in line`). This allows attackers to bypass filters using domains like `fakeyoutube.com` or injecting the target domain string inside the path or value fields of a completely unrelated cookie line.
+**Learning:** Checking for substrings anywhere in a delimited file format is inherently insecure. The Netscape Cookie format is tab-delimited, and the domain is strictly the first column.
+**Prevention:** Always parse structured cookie files correctly. Split lines by tabs (`\t`), extract the exact domain column, handle prefix quirks like `#HttpOnly_`, and validate using exact matches (`==`) or suffix matches (`.endswith()`) that include the preceding dot (e.g., `.endswith(".youtube.com")`).
