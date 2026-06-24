@@ -526,7 +526,7 @@ def download_video(
                 print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
                 try:
                     user_input = input().strip().lower()
-                except KeyboardInterrupt, EOFError:
+                except (KeyboardInterrupt, EOFError):
                     print_err("\nProcesso interrompido pelo usuário.")
                     raise KeyboardInterrupt
                 
@@ -640,7 +640,7 @@ def download_video(
                     print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
                     try:
                         user_input = input().strip().lower()
-                    except KeyboardInterrupt, EOFError:
+                    except (KeyboardInterrupt, EOFError):
                         print_err("\nProcesso interrompido pelo usuário.")
                         raise KeyboardInterrupt
                     
@@ -682,8 +682,26 @@ def filter_youtube_cookies(cookies_path_obj: Path) -> None:
 
         filtered_lines_list: List[str] = []
         for line_str in lines_list:
-            if line_str.startswith("#") or "youtube.com" in line_str or "google.com" in line_str:
+            # Mantém o cabeçalho obrigatório
+            if line_str.startswith("# Netscape HTTP Cookie File"):
                 filtered_lines_list.append(line_str)
+                continue
+
+            # Identifica e trata cookies marcados como HttpOnly
+            is_httponly: bool = line_str.startswith("#HttpOnly_")
+            cookie_line_str: str = line_str[10:] if is_httponly else line_str
+
+            # Pula comentários comuns e linhas vazias
+            if cookie_line_str.startswith("#") or not cookie_line_str.strip():
+                continue
+
+            # Validação rigorosa de domínio para prevenir vazamento (ex: evil-youtube.com)
+            parts_list: List[str] = cookie_line_str.split('\t')
+            if len(parts_list) >= 7:
+                domain_str: str = parts_list[0]
+                if (domain_str.endswith(".youtube.com") or domain_str == "youtube.com" or
+                    domain_str.endswith(".google.com") or domain_str == "google.com"):
+                    filtered_lines_list.append(line_str)
 
         # Grava de volta o arquivo higienizado
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:

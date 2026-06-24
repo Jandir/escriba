@@ -1,0 +1,4 @@
+## 2024-05-18 - [Fix cookie domain parsing vulnerability]
+**Vulnerability:** The cookie file parsing used a broad string search (`"youtube.com" in line_str`) to filter out non-YouTube/Google cookies. This would inadvertently allow malicious domains containing the string, like `evil-youtube.com`, to leak session cookies.
+**Learning:** Broad substring matching for domains in cookie files is a security risk. Netscape HTTP Cookie files must be strictly parsed using tabs (`\t`) as column delimiters, and domain validation must ensure an exact match or a valid sub-domain match (e.g., `.endswith(".youtube.com")` or `== "youtube.com"`).
+**Prevention:** Always parse structured files like Netscape HTTP Cookie files strictly by columns instead of relying on loose text search. Validate domains explicitly with strict boundaries.
