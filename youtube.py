@@ -526,7 +526,7 @@ def download_video(
                 print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
                 try:
                     user_input = input().strip().lower()
-                except KeyboardInterrupt, EOFError:
+                except (KeyboardInterrupt, EOFError):
                     print_err("\nProcesso interrompido pelo usuário.")
                     raise KeyboardInterrupt
                 
@@ -640,7 +640,7 @@ def download_video(
                     print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
                     try:
                         user_input = input().strip().lower()
-                    except KeyboardInterrupt, EOFError:
+                    except (KeyboardInterrupt, EOFError):
                         print_err("\nProcesso interrompido pelo usuário.")
                         raise KeyboardInterrupt
                     
@@ -681,9 +681,24 @@ def filter_youtube_cookies(cookies_path_obj: Path) -> None:
             lines_list: List[str] = file_descriptor_obj.readlines()
 
         filtered_lines_list: List[str] = []
+
         for line_str in lines_list:
-            if line_str.startswith("#") or "youtube.com" in line_str or "google.com" in line_str:
+            # Handle HttpOnly prefix explicitly and valid comments
+            is_httponly = line_str.startswith("#HttpOnly_")
+            if line_str.startswith("#") and not is_httponly:
                 filtered_lines_list.append(line_str)
+                continue
+
+            # Remove HttpOnly prefix for domain extraction if present
+            process_line = line_str[10:] if is_httponly else line_str
+            parts = process_line.split("\t")
+
+            # Netscape cookie format has 7 tab-separated columns
+            if len(parts) >= 1:
+                domain = parts[0].strip()
+                if domain.endswith(".youtube.com") or domain == "youtube.com" or \
+                   domain.endswith(".google.com") or domain == "google.com":
+                    filtered_lines_list.append(line_str)
 
         # Grava de volta o arquivo higienizado
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:

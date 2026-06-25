@@ -439,10 +439,24 @@ def filter_vimeo_cookies(cookies_path_obj: Path) -> None:
             lines_list: List[str] = file_descriptor_obj.readlines()
 
         filtered_lines_list: List[str] = []
+
         for line_str in lines_list:
-            # Mantém cookies do vimeo e da CDN de vídeos deles (akamaized.net)
-            if line_str.startswith("#") or "vimeo.com" in line_str or "akamaized.net" in line_str:
+            # Handle HttpOnly prefix explicitly and valid comments
+            is_httponly = line_str.startswith("#HttpOnly_")
+            if line_str.startswith("#") and not is_httponly:
                 filtered_lines_list.append(line_str)
+                continue
+
+            # Remove HttpOnly prefix for domain extraction if present
+            process_line = line_str[10:] if is_httponly else line_str
+            parts = process_line.split("\t")
+
+            # Netscape cookie format has 7 tab-separated columns
+            if len(parts) >= 1:
+                domain = parts[0].strip()
+                if domain.endswith(".vimeo.com") or domain == "vimeo.com" or \
+                   domain.endswith(".akamaized.net") or domain == "akamaized.net":
+                    filtered_lines_list.append(line_str)
 
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:
             file_descriptor_obj.writelines(filtered_lines_list)
