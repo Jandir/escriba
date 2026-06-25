@@ -1,0 +1,4 @@
+## 2024-05-24 - Cross-Domain Cookie Leakage via Substring Matching
+**Vulnerability:** Cookie filtering functions (`filter_youtube_cookies`, `filter_vimeo_cookies`) relied on broad substring matching (e.g., `"youtube.com" in line`) to validate Netscape HTTP Cookie Files. A malicious cookie file containing the domain string in its path or value could bypass the filter.
+**Learning:** Netscape cookie files must be strictly parsed by their tab-separated structure, and domain validations must explicitly check the domain column using exact match or secure suffix matching (e.g., `domain.endswith(".youtube.com")`). Furthermore, the `#HttpOnly_` prefix must be handled explicitly as valid cookie lines rather than being discarded as comments.
+**Prevention:** Never use simplistic `in` operators for domain validation in plain text formats. Parse structural files properly, strip `#HttpOnly_` prefixes, and validate exact suffix matches on the domain column.
