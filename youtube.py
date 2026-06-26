@@ -526,7 +526,7 @@ def download_video(
                 print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
                 try:
                     user_input = input().strip().lower()
-                except KeyboardInterrupt, EOFError:
+                except (KeyboardInterrupt, EOFError):
                     print_err("\nProcesso interrompido pelo usuário.")
                     raise KeyboardInterrupt
                 
@@ -640,7 +640,7 @@ def download_video(
                     print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
                     try:
                         user_input = input().strip().lower()
-                    except KeyboardInterrupt, EOFError:
+                    except (KeyboardInterrupt, EOFError):
                         print_err("\nProcesso interrompido pelo usuário.")
                         raise KeyboardInterrupt
                     
@@ -682,8 +682,20 @@ def filter_youtube_cookies(cookies_path_obj: Path) -> None:
 
         filtered_lines_list: List[str] = []
         for line_str in lines_list:
-            if line_str.startswith("#") or "youtube.com" in line_str or "google.com" in line_str:
+            if line_str.startswith("# ") or line_str.strip() == "" or line_str == "#\n":
                 filtered_lines_list.append(line_str)
+                continue
+
+            parts = line_str.split('\t')
+            if len(parts) >= 7:
+                domain = parts[0]
+                if domain.startswith("#HttpOnly_"):
+                    actual_domain = domain[10:]
+                else:
+                    actual_domain = domain
+
+                if actual_domain.endswith('.youtube.com') or actual_domain == 'youtube.com' or actual_domain.endswith('.google.com') or actual_domain == 'google.com':
+                    filtered_lines_list.append(line_str)
 
         # Grava de volta o arquivo higienizado
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:

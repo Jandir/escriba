@@ -38,6 +38,27 @@ def test_filter_youtube_cookies_missing_file():
     filter_youtube_cookies(Path("non_existent_cookies_file.txt"))
 
 
+def test_filter_youtube_cookies_httponly_leak(tmp_path: Path):
+    """Verifica se não vazam cookies #HttpOnly_ de outros domínios ou domínios maliciosos com nomes similares."""
+    cookies_file_path: Path = tmp_path / "cookies.txt"
+    content_str: str = (
+        "# Netscape HTTP Cookie File\n"
+        "#HttpOnly_.banco.com\tTRUE\t/\tFALSE\t0\tSESSION\tsecret\n"
+        ".youtube.com\tTRUE\t/\tFALSE\t0\tSID\tvalue1\n"
+        "#HttpOnly_.youtube.com\tTRUE\t/\tFALSE\t0\tHSID\tvalue2\n"
+        "evilyoutube.com\tTRUE\t/\tFALSE\t0\tEVIL\tvalue3\n"
+    )
+    cookies_file_path.write_text(content_str, encoding="utf-8")
+
+    filter_youtube_cookies(cookies_file_path)
+
+    result_str: str = cookies_file_path.read_text(encoding="utf-8")
+    assert "banco.com" not in result_str
+    assert "evilyoutube.com" not in result_str
+    assert "SID\tvalue1" in result_str
+    assert "HSID\tvalue2" in result_str
+
+
 def test_download_video_command_construction():
     """Verifica se o comando yt-dlp é construído corretamente com e sem a flag download_video_only_hd."""
     from unittest.mock import patch

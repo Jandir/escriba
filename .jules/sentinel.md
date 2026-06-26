@@ -1,0 +1,4 @@
+## 2024-06-26 - [CRITICAL] Prevent Cross-Domain HttpOnly Cookie Leakage
+**Vulnerability:** The Netscape HTTP cookie parser used naive substring domain matching (`"youtube.com" in line_str`) and indiscriminately preserved all lines starting with `#`. This effectively leaked highly sensitive `#HttpOnly_` cookies from external, unassociated domains (such as banks or email providers) during yt-dlp cookie extraction.
+**Learning:** Netscape HTTP Cookie file formats prefix `HttpOnly` cookies with `#HttpOnly_`. Treating any line starting with `#` as a safe comment in a security-filtering context leads to critical data exposure.
+**Prevention:** Always parse Netscape cookie files by strictly splitting lines via tabs (`\t`). Strip `#HttpOnly_` prefixes from the domain column before validating the domain against a strict whitelist (e.g., using `str.endswith()`).
