@@ -534,7 +534,7 @@ def download_video(
                 print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
                 try:
                     user_input = input().strip().lower()
-                except KeyboardInterrupt, EOFError:
+                except (KeyboardInterrupt, EOFError):
                     print_err("\nProcesso interrompido pelo usuário.")
                     raise KeyboardInterrupt
                 
@@ -651,7 +651,7 @@ def download_video(
                     print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
                     try:
                         user_input = input().strip().lower()
-                    except KeyboardInterrupt, EOFError:
+                    except (KeyboardInterrupt, EOFError):
                         print_err("\nProcesso interrompido pelo usuário.")
                         raise KeyboardInterrupt
                     
