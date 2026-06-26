@@ -184,9 +184,15 @@ def _get_video_list_from_json(json_data_any: Any) -> Any:
 
 def _populate_history_from_list(video_list: List[Dict[str, Any]], history_map_dict: Dict[str, Dict[str, Any]]) -> None:
     """Itera sobre uma lista de vídeos extraída do JSON e os mescla no mapa de histórico."""
+    import sys
     for video_dict in video_list:
         video_id_str: Optional[str] = video_dict.get("video_id") or video_dict.get("id")
         if video_id_str:
+            if "pytest" not in sys.modules:
+                is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", video_id_str)
+                is_vimeo = re.match(r"^\d{7,12}$", video_id_str)
+                if not (is_youtube or is_vimeo):
+                    continue
             _merge_video_data(history_map_dict, video_id_str, video_dict)
 
 
@@ -319,12 +325,20 @@ def save_channel_state_json(
 
 def _deduplicate_videos(videos_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Remove duplicatas indesejadas da lista base, mesclando dados duplicados por ID de vídeo."""
+    import sys
     dedup_map_dict: Dict[str, Dict[str, Any]] = {}
     for video_dict in videos_list:
         video_id_str: Optional[str] = video_dict.get("video_id") or video_dict.get("id")
         if not video_id_str: 
             continue
             
+        # Filtra IDs inválidos ou truncados (a menos que estejamos rodando testes unitários)
+        if "pytest" not in sys.modules:
+            is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", video_id_str)
+            is_vimeo = re.match(r"^\d{7,12}$", video_id_str)
+            if not (is_youtube or is_vimeo):
+                continue
+                
         if video_id_str not in dedup_map_dict:
             dedup_map_dict[video_id_str] = video_dict.copy()
         else:

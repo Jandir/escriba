@@ -55,3 +55,17 @@ def test_download_video_command_construction_vimeo():
         assert len(download_calls_params) == 2
         assert not download_calls_params[-1].get("skip_download")
         assert download_calls_params[-1].get("format") == "bestvideo[height<=1080]"
+
+
+def test_download_video_invalid_id_vimeo():
+    """Verifica se IDs inválidos/truncados de Vimeo retornam código 2 imediatamente."""
+    from vimeo import download_video
+    
+    res = download_video(
+        yt_dlp_cmd_list=["yt-dlp"],
+        cookie_args_list=[],
+        video_id_str="12345",  # 5 caracteres (inválido, precisa ter entre 7 e 12)
+        lang_filter_str="pt",
+        folder_name_str="canal"
+    )
+    assert res == 2

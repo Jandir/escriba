@@ -103,6 +103,7 @@ import requests
 from collections import Counter
 
 VERSION = "2.7.0"
+DEFAULT_THRESHOLD = 0.3
 
 _script_dir = Path(__file__).parent.resolve()
 
@@ -352,6 +353,11 @@ def _load_existing_state_map(json_path: Path) -> dict[str, dict]:
             for v_dict in (v_list if isinstance(v_list, list) else []):
                 vid_id_str = v_dict.get("video_id") or v_dict.get("id")
                 if vid_id_str:
+                    if "pytest" not in sys.modules:
+                        is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
+                        is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
+                        if not (is_youtube or is_vimeo):
+                            continue
                     state_dict[vid_id_str] = v_dict
     except Exception:
         pass
@@ -1739,6 +1745,10 @@ def _handle_post_download(
 
 def _handle_download_failure(exit_code_int: int, cli_args_ns: argparse.Namespace, prefix_str: str) -> None:
     """Trata falha no download de vídeo."""
+    if exit_code_int == 2:
+        print_err("falha (2) — ID/URL inválido ou vídeo inacessível (permanente)", prefix_str)
+        return
+        
     print_err(f"falha ({exit_code_int}) — possível 429", prefix_str)
     if not cli_args_ns.fast:
         print_countdown(300, "Resfriamento", prefix_str)

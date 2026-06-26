@@ -228,6 +228,11 @@ def download_video(
     output_template_str: str = f"{folder_name_str}-{video_id_str}.%(ext)s"
     vimeo_url = f"https://vimeo.com/{video_id_str}"
     
+    # Valida se o ID do vídeo é válido para o Vimeo (7 a 12 dígitos)
+    if not (video_id_str and re.match(r"^\d{7,12}$", video_id_str)):
+        print_err(f"ID do Vimeo inválido ou truncado: {video_id_str}")
+        return 2
+    
     base_args = yt_dlp_cmd_list[3:] + cookie_args_list + [
         "--ignore-no-formats-error",
         "--write-info-json",
@@ -263,6 +268,9 @@ def download_video(
         
         with yt_dlp.YoutubeDL(extract_opts) as ydl:
             info = ydl.extract_info(vimeo_url, download=False)
+            
+        if info is None:
+            raise ValueError("Não foi possível extrair informações do vídeo (info é None)")
             
         subtitles = info.get('subtitles') or {}
         auto_captions = info.get('automatic_captions') or {}
@@ -367,6 +375,9 @@ def download_video(
             with yt_dlp.YoutubeDL(extract_opts_retry) as ydl:
                 info = ydl.extract_info(vimeo_url, download=False)
                 
+            if info is None:
+                raise ValueError("Não foi possível extrair informações do vídeo após renovação de cookies (info é None)")
+                
             subtitles = info.get('subtitles') or {}
             auto_captions = info.get('automatic_captions') or {}
             
@@ -423,7 +434,7 @@ def download_video(
             if getattr(sys, "_escriba_interrupted", False):
                 raise KeyboardInterrupt
             print_err(f"Erro crítico Vimeo após cookies no vídeo {video_id_str}: {retry_error}")
-            return 1
+            return 2
 
 
 def filter_vimeo_cookies(cookies_path_obj: Path) -> None:

@@ -452,3 +452,19 @@ def test_create_adaptive_windows_returns_clean_texts():
     assert isinstance(clean_texts, dict)
     assert len(windows_list) == 1
     assert len(clean_texts) == 2
+
+
+def test_handle_download_failure_exit_code_2():
+    """Verifica se _handle_download_failure com código 2 não chama o countdown de resfriamento."""
+    import argparse
+    from unittest.mock import patch
+    
+    cli_args = argparse.Namespace(fast=False)
+    
+    with patch("escriba.print_err") as mock_print_err, \
+         patch("escriba.print_countdown") as mock_print_countdown:
+         
+        escriba._handle_download_failure(exit_code_int=2, cli_args_ns=cli_args, prefix_str="test")
+        
+        mock_print_err.assert_called_once_with("falha (2) — ID/URL inválido ou vídeo inacessível (permanente)", "test")
+        mock_print_countdown.assert_not_called()

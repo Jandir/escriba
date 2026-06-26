@@ -409,6 +409,11 @@ def download_video(
     output_template_str: str = f"{folder_name_str}-{video_id_str}.%(ext)s"
     url = f"https://www.youtube.com/watch?v={video_id_str}"
     
+    # Valida se o ID do vídeo é válido para o YouTube (exatamente 11 caracteres)
+    if not (video_id_str and len(video_id_str) == 11 and re.match(r"^[A-Za-z0-9_-]{11}$", video_id_str)):
+        print_err(f"Incomplete YouTube ID {video_id_str}. URL {url} looks truncated.")
+        return 2
+    
     download_args = ["-f", "bestvideo[height<=1080]"] if download_video_only_hd else ["--skip-download"]
     
     lang_pattern = _normalize_lang_pattern(lang_filter_str)
@@ -449,6 +454,9 @@ def download_video(
             
             with yt_dlp.YoutubeDL(extract_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
+                
+            if info is None:
+                raise ValueError("Não foi possível extrair informações do vídeo (info é None)")
                 
             subtitles = info.get('subtitles') or {}
             auto_captions = info.get('automatic_captions') or {}
@@ -578,6 +586,9 @@ def download_video(
                 with yt_dlp.YoutubeDL(extract_opts_retry) as ydl:
                     info = ydl.extract_info(url, download=False)
                     
+                if info is None:
+                    raise ValueError("Não foi possível extrair informações do vídeo após renovação de cookies (info é None)")
+                    
                 subtitles = info.get('subtitles') or {}
                 auto_captions = info.get('automatic_captions') or {}
                 
@@ -657,7 +668,7 @@ def download_video(
                     continue
                 
                 print_err(f"Erro crítico após renovar cookies no vídeo {video_id_str}: {retry_error}")
-                return 1
+                return 2
 
 
 def filter_youtube_cookies(cookies_path_obj: Path) -> None:
