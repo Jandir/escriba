@@ -21,14 +21,20 @@ def test_filter_youtube_cookies_logic(tmp_path: Path):
         ".youtube.com\tTRUE\t/\tFALSE\t0\tSID\tvalue1\n"
         ".google.com\tTRUE\t/\tFALSE\t0\tGAIA\tvalue2\n"
         ".other.com\tTRUE\t/\tFALSE\t0\tID\tvalue3\n"
+        "evilyoutube.com\tTRUE\t/\tFALSE\t0\tBAD\tvalue4\n"
+        "#HttpOnly_.youtube.com\tTRUE\t/\tFALSE\t0\tSECURE\tvalue5\n"
+        "#HttpOnly_fakeyoutube.com\tTRUE\t/\tFALSE\t0\tBADSECURE\tvalue6\n"
     )
     cookies_file_path.write_text(content_str, encoding="utf-8")
     
     filter_youtube_cookies(cookies_file_path)
     
     result_str: str = cookies_file_path.read_text(encoding="utf-8")
-    assert "youtube.com" in result_str
-    assert "google.com" in result_str
+    assert "SID" in result_str
+    assert "GAIA" in result_str
+    assert "SECURE" in result_str
+    assert "BAD" not in result_str
+    assert "BADSECURE" not in result_str
     assert "other.com" not in result_str
     assert "# Netscape" in result_str
 
