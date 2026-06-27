@@ -693,8 +693,23 @@ def filter_youtube_cookies(cookies_path_obj: Path) -> None:
 
         filtered_lines_list: List[str] = []
         for line_str in lines_list:
-            if line_str.startswith("#") or "youtube.com" in line_str or "google.com" in line_str:
+            # Mantém comentários tradicionais e cookies com a flag #HttpOnly_
+            if line_str.startswith("#") and not line_str.startswith("#HttpOnly_"):
                 filtered_lines_list.append(line_str)
+                continue
+
+            # Para linhas de dados, precisamos remover o prefixo #HttpOnly_ se existir
+            # apenas para fins de parse da linha
+            parse_line = line_str[10:] if line_str.startswith("#HttpOnly_") else line_str
+            parts = parse_line.split("\t")
+
+            # Se a linha não tiver o formato correto, descartamos
+            if len(parts) >= 7:
+                domain = parts[0]
+                # Validaçao estrita de domínio via sufixo/igualdade em vez de substring global
+                if (domain == "youtube.com" or domain.endswith(".youtube.com") or
+                    domain == "google.com" or domain.endswith(".google.com")):
+                    filtered_lines_list.append(line_str)
 
         # Grava de volta o arquivo higienizado
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:
