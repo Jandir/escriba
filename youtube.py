@@ -533,6 +533,9 @@ def download_video(
                 print_warn("  3. Caso o IP esteja bloqueado, altere a VPN ou mude sua conexão.")
                 print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
                 try:
+                    if not sys.stdin.isatty():
+                        print_warn("Ambiente não-interativo detectado. Pulando vídeo automaticamente devido a erro HTTP 429.")
+                        return 1
                     user_input = input().strip().lower()
                 except (KeyboardInterrupt, EOFError):
                     print_err("\nProcesso interrompido pelo usuário.")
@@ -650,6 +653,9 @@ def download_video(
                     print_warn("  3. Caso o IP esteja bloqueado, altere a VPN ou mude sua conexão.")
                     print_info("Pressione ENTER para renovar os cookies e tentar novamente, digite 'p' + ENTER para pular este vídeo, ou Ctrl+C para abortar...")
                     try:
+                        if not sys.stdin.isatty():
+                            print_warn("Ambiente não-interativo detectado. Pulando vídeo automaticamente devido a erro HTTP 429.")
+                            return 1
                         user_input = input().strip().lower()
                     except (KeyboardInterrupt, EOFError):
                         print_err("\nProcesso interrompido pelo usuário.")

@@ -81,6 +81,11 @@ import glob
 import json
 import re
 import random
+import threading
+try:
+    import _interpreters
+except ImportError:
+    _interpreters = None
 import shutil
 import time
 import functools
@@ -102,7 +107,7 @@ import requests
 
 from collections import Counter
 
-VERSION = "2.7.0"
+VERSION = "2.7.1"
 DEFAULT_THRESHOLD = 0.3
 
 _script_dir = Path(__file__).parent.resolve()
@@ -1107,7 +1112,7 @@ def _add_utility_args(parser_obj: argparse.ArgumentParser) -> None:
     parser_obj.add_argument("--regen-md", action="store_true", help="Modo offline: regenera .md a partir de todos os .srt na pasta atual")
     parser_obj.add_argument("--force", action="store_true", help="Combinado com --regen-md: sobrescreve .md existentes")
     parser_obj.add_argument("--upgrade-md", action="store_true", help="Converte cabeçalho dos .md existentes para o novo formato (YAML)")
-    parser_obj.add_argument("--consolidar", action="store_true", help="Gera ou atualiza os volumes unificados do NotebookLM (busca na pasta atual, 'archive' e 'archives')")
+    parser_obj.add_argument("--consolidar", "-j", "--juntar", action="store_true", help="Gera ou atualiza os volumes unificados do NotebookLM (busca na pasta atual, 'archive' e 'archives'). Alias: -j / --juntar")
     parser_obj.add_argument("--lexis-reset", action="store_true", help="Apaga os volumes do NotebookLM do canal e reprocessa")
     parser_obj.add_argument("--migrate", action="store_true", help="Adapta bancos de dados JSON antigos para a nova versão")
     parser_obj.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, metavar="FLOAT",
@@ -1569,13 +1574,21 @@ def _handle_empty_working_list(channel_filter_str: str | None) -> None:
     sys.exit(1)
 
 
-def _print_process_start(working_list: list[dict], is_first_channel_bool: bool) -> None:
-    """Imprime cabeçalho de início de processamento."""
-    if is_first_channel_bool: print_section("Processamento")
-    info_int = sum(1 for v in working_list if v.get("info_downloaded"))
+def _print_partition_summary(
+    working_list: list[dict], to_download: list[dict], is_first_channel_bool: bool
+) -> None:
+    """Imprime o resultado do particionamento em uma única linha antes do loop de download."""
+    if is_first_channel_bool:
+        print_section("Processamento")
+    n_total    = len(working_list)
+    n_download = len(to_download)
+    n_skip     = n_total - n_download
     no_sub_int = sum(1 for v in working_list if v.get("has_no_subtitle"))
-    print_info(f"Histórico: {info_int} metadados no JSON · {no_sub_int} sem legenda")
-    print_section(f"Download  {DIM}(0/{len(working_list)}){RESET}")
+    print_info(f"Verificando histórico: {BOLD}{n_skip}{RESET}/{n_total} já processados · {no_sub_int} sem legenda")
+    if n_download > 0:
+        print_section(f"Download  {DIM}(0/{n_download}){RESET}")
+    else:
+        print_ok("Nenhum vídeo novo para baixar.")
 
 
 def process_videos(
@@ -1584,37 +1597,78 @@ def process_videos(
 ) -> tuple:
     """Orquestra o download e processamento de vídeos."""
     try:
-        # Prepara o cache de arquivos em disco O(1)
+        # ── Cache de disco via os.scandir() ──────────────────────────────────
+        # os.scandir() usa DirEntry que já carrega o tipo do arquivo sem syscall
+        # stat() adicional. Regex pré-compilado fora do loop evita recompilação.
         if conf_obj.disk_files_cache is None:
             from collections import defaultdict
-            cache = defaultdict(list)
-            prefix = f"{conf_obj.channel_dir_name}-"
-            for f in conf_obj.cwd_path.iterdir():
-                if f.is_file() and f.name.startswith(prefix):
-                    # Extrai o video_id (YouTube=11 chars, Vimeo=números)
-                    # O padrão é {folder_name}-{video_id}.ext
-                    match = re.search(fr"^{re.escape(prefix)}([A-Za-z0-9_-]{{11}}|\d+)", f.name)
-                    if match:
-                        vid_id = match.group(1)
-                        cache[vid_id].append(f.name)
+            prefix    = f"{conf_obj.channel_dir_name}-"
+            prefix_re = re.compile(fr"^{re.escape(prefix)}([A-Za-z0-9_-]{{11}}|\d+)")
+            cache: defaultdict[str, list[str]] = defaultdict(list)
+            with os.scandir(conf_obj.cwd_path) as entries:
+                for entry in entries:
+                    if entry.is_file(follow_symlinks=False) and entry.name.startswith(prefix):
+                        m = prefix_re.match(entry.name)
+                        if m:
+                            cache[m.group(1)].append(entry.name)
             conf_obj.disk_files_cache = dict(cache)
 
-        # Configura variável global temporária para o Smart Sync no carregamento
         sys._escriba_full_scan = cli_args_ns.full_scan
 
         json_path, full_list, working_list, chan_tot_int = _prepare_working_state(
             conf_obj, cookies_list, lang_str, cli_args_ns, channel_filter_str, is_first_channel_bool
         )
-        
+
         if not working_list:
             if is_first_channel_bool: print_ok("Nenhum vídeo novo para processar.")
             return 0, 0, 0, 0, chan_tot_int, False
 
-        _print_process_start(working_list, is_first_channel_bool)
-        stats, interrupted, pending = _run_video_download_loop(
-            conf_obj, cookies_list, lang_str, cli_args_ns, json_path, full_list, working_list
+        # ── Particionamento por conjuntos (Set Partition) ─────────────────────
+        # Substitui o loop imperativo com _check_video_skip() por vídeo por
+        # operações de conjuntos executadas em C interno do CPython — sem overhead
+        # de chamada de função por item.
+        retry_nosub = getattr(cli_args_ns, "retry_nosub", False)
+        disk_cache  = conf_obj.disk_files_cache or {}
+
+        # Set comprehensions: O(N) em C, sem chamada de função por item
+        already_downloaded_ids = {v["video_id"] for v in working_list if v.get("subtitle_downloaded")}
+        no_subtitle_ids        = {v["video_id"] for v in working_list
+                                   if v.get("has_no_subtitle") and not retry_nosub}
+        disk_ids               = set(disk_cache)   # dict → set: O(1) amortizado
+        all_skip_ids           = already_downloaded_ids | no_subtitle_ids | disk_ids
+
+        # Pré-agenda MD para arquivos .srt encontrados no disco sem .md correspondente
+        pending_md_pre: list[tuple] = []
+        for v in working_list:
+            vid_id = v["video_id"]
+            if vid_id in disk_ids and vid_id not in already_downloaded_ids:
+                files   = disk_cache.get(vid_id, [])
+                has_srt = any(f.endswith(".srt") for f in files)
+                has_md  = any(f.endswith(".md")  for f in files)
+                if has_srt and not has_md and cli_args_ns.md:
+                    srt_f = next(f for f in files if f.endswith(".srt"))
+                    pending_md_pre.append((
+                        conf_obj.cwd_path / srt_f, vid_id,
+                        v.get("title", "Sem Título"), v.get("publish_date", "N/A")
+                    ))
+                # Replica o que _check_disk_files fazia: marca como baixado em memória
+                v.update({"info_downloaded": True, "subtitle_downloaded": True})
+
+        # Partição final: apenas vídeos que realmente precisam ser baixados
+        to_download = [v for v in working_list if v["video_id"] not in all_skip_ids]
+        n_total     = len(working_list)
+        pre_skipped = n_total - len(to_download)
+
+        _print_partition_summary(working_list, to_download, is_first_channel_bool)
+
+        stats, interrupted, pending_dl = _run_video_download_loop(
+            conf_obj, cookies_list, lang_str, cli_args_ns, json_path, full_list,
+            to_download, pre_skip_count=pre_skipped, total_count=n_total
         )
-        
+
+        # Combina MD pré-agendados (disco) + gerados durante o download
+        pending = pending_md_pre + pending_dl
+
         # Mesmo se o download foi interrompido, tenta converter o que já baixou
         interrupted_md = _run_deferred_md_conversion(pending, cli_args_ns)
         
@@ -1628,15 +1682,26 @@ def process_videos(
 
 def _run_video_download_loop(
     conf: SessionConfig, cookies: list[str], lang: str, args: argparse.Namespace,
-    json_path: Path, full_list: list[dict], working_list: list[dict]
+    json_path: Path, full_list: list[dict], to_download_list: list[dict],
+    pre_skip_count: int = 0, total_count: int = 0
 ) -> tuple[tuple[int, int, int, int], bool, list]:
-    """Executa o loop de download de vídeos com persistência periódica."""
-    stats_list, pending_md, dirty, interrupted = [0, 0, 0], [], [0], False
+    """Executa o loop de download sobre vídeos pré-filtrados pelo particionamento.
+    
+    Args:
+        to_download_list: Apenas vídeos que precisam de download (sem skips).
+        pre_skip_count:   Skips contabilizados antes do loop (particionamento).
+        total_count:      Total real da sessão para estatísticas do resumo.
+    """
+    # Skip pré-inicializado com o resultado do particionamento
+    stats_list = [0, pre_skip_count, 0]  # [dl, skip, err]
+    pending_md, dirty, interrupted = [], [0], False
+    n = len(to_download_list)
+    real_total = total_count or n
     try:
-        for idx_int, video_dict in enumerate(working_list, start=1):
+        for idx_int, video_dict in enumerate(to_download_list, start=1):
             if getattr(sys, "_escriba_interrupted", False):
                 raise KeyboardInterrupt
-            res = _process_loop_item(idx_int, video_dict, conf, cookies, lang, args, pending_md, dirty, len(working_list))
+            res = _process_loop_item(idx_int, video_dict, conf, cookies, lang, args, pending_md, dirty, n)
             _update_loop_stats(res, stats_list)
             _check_auto_save(json_path, full_list, lang, conf, dirty)
     except KeyboardInterrupt:
@@ -1645,14 +1710,10 @@ def _run_video_download_loop(
         msg = "Pulando para geração de arquivos .md..." if args.md else "Pulando para as próximas etapas..."
         print_warn(f"Download interrompido. {DIM}{msg}{RESET}")
         cleanup_temp_files(conf.cwd_path, conf.channel_dir_name)
-    
+
     _persist_state(json_path, full_list, lang, conf)
-    
-    # Se terminamos o loop com um contador dinâmico na tela, limpamos
-    sys.stdout.write("\r" + " " * 100 + "\r")
-    sys.stdout.flush()
-    
-    return (*stats_list, len(working_list)), interrupted, pending_md
+
+    return (*stats_list, real_total), interrupted, pending_md
 
 
 def _update_loop_stats(res_tuple: tuple[int, bool], stats_list: list[int]) -> None:
@@ -1675,18 +1736,14 @@ def _process_loop_item(
     cookie_args_list: list[str], language_opt_str: str, cli_args: argparse.Namespace,
     pending_md_list: list, dirty_int: list[int], total: int
 ) -> tuple[int, bool]:
-    """Processa um item individual do loop de download."""
-    prefix_str = f"  {BLUE}[{idx:>{len(str(total))}}/{total}]{RESET}"
-    if _check_video_skip(video_dict, session_config, cli_args, prefix_str, pending_md_list, idx_int=idx, total_int=total):
-        if video_dict.get("subtitle_downloaded"): dirty_int[0] += 1
-        return 0, True
+    """Processa um item individual do loop de download.
     
-    # Se chegamos aqui, o vídeo NÃO será pulado. 
-    # Precisamos garantir que a linha do contador dinâmico seja encerrada.
-    print() 
-
+    Nota: A entrada já foi pré-filtrada pelo particionamento de conjuntos em
+    process_videos() — todos os itens aqui requerem download efetivo.
+    """
+    prefix_str = f"  {BLUE}[{idx:>{len(str(total))}}/{total}]{RESET}"
     res = _download_and_process_single(
-        video_dict, session_config, cookie_args_list, language_opt_str, 
+        video_dict, session_config, cookie_args_list, language_opt_str,
         cli_args, prefix_str, pending_md_list, dirty_int
     )
     return res, False
@@ -1744,6 +1801,10 @@ def _handle_post_download(
 
 def _handle_download_failure(exit_code_int: int, cli_args_ns: argparse.Namespace, prefix_str: str) -> None:
     """Trata falha no download de vídeo."""
+    if exit_code_int == 2:
+        print_err("falha (2) — ID/URL inválido ou vídeo inacessível (permanente)", prefix_str)
+        return
+        
     print_err(f"falha ({exit_code_int}) — possível 429", prefix_str)
     if not cli_args_ns.fast:
         print_countdown(300, "Resfriamento", prefix_str)
@@ -1805,6 +1866,34 @@ def _handle_missing_subtitle(video_dict: dict, cli_args_ns: argparse.Namespace, 
     return 0
 
 
+def _get_concurrency_config(total_int: int) -> tuple[bool, int]:
+    """Retorna se deve usar paralelismo e o número de threads com base no estado do GIL no Python 3.14."""
+    import sys
+    import sysconfig
+    
+    # Detecção de GIL desativado (Free-threaded Python 3.14+)
+    gil_disabled = False
+    if hasattr(sys, "_is_gil_enabled"):
+        gil_disabled = not sys._is_gil_enabled()
+    else:
+        try:
+            gil_disabled = (sysconfig.get_config_var("Py_GIL_DISABLED") == 1)
+        except Exception:
+            pass
+            
+    if gil_disabled:
+        # Sem GIL: podemos paralelizar mesmo lotes pequenos sem overhead do GIL.
+        # max_workers usa todos os cores lógicos de CPU.
+        use_parallel = total_int > 1
+        max_workers = os.cpu_count() or 4
+        return use_parallel, max_workers
+    else:
+        # Com GIL: manter a otimização conservadora tradicional
+        use_parallel = total_int > 10
+        max_workers = min(os.cpu_count() or 4, 8) if use_parallel else 1
+        return use_parallel, max_workers
+
+
 def _run_deferred_md_conversion(pending_list: list[tuple], cli_args_ns: argparse.Namespace) -> bool:
     """Executa a conversão para MD dos arquivos agendados. Retorna True se interrompido."""
     if not pending_list:
@@ -1813,9 +1902,8 @@ def _run_deferred_md_conversion(pending_list: list[tuple], cli_args_ns: argparse
     total_int = len(pending_list)
     print()
     
-    # Ativamos o pool de threads apenas para mais de 10 arquivos para evitar overhead em lotes pequenos.
-    use_parallel_bool = total_int > 10
-    max_workers = min(os.cpu_count() or 4, 8) if use_parallel_bool else 1
+    # Ativamos o pool de threads com base na configuração adaptativa do GIL
+    use_parallel_bool, max_workers = _get_concurrency_config(total_int)
     
     mode_suffix_str = f" ({max_workers} threads)" if use_parallel_bool else ""
     print_info(f"Fase 4: Clusterização de IA (TF-IDF) — {BOLD}{total_int} arquivo(s){RESET}{mode_suffix_str}")
@@ -1934,9 +2022,8 @@ def _run_regen_loop(srt_list: list, lookup_dict: dict, force_bool: bool) -> tupl
     conv_int, skip_int = 0, 0
     total_int = len(srt_list)
     
-    # Ativamos o pool de threads apenas para mais de 10 arquivos para evitar overhead em lotes pequenos.
-    use_parallel_bool = total_int > 10
-    max_workers = min(os.cpu_count() or 4, 8) if use_parallel_bool else 1
+    # Ativamos o pool de threads com base na configuração adaptativa do GIL
+    use_parallel_bool, max_workers = _get_concurrency_config(total_int)
     
     if use_parallel_bool:
         print_info(f"Iniciando regeneração paralela ({max_workers} threads)...")
@@ -2288,7 +2375,7 @@ def _handle_cli_pre_flows(cli_args: argparse.Namespace) -> bool:
         migrate_all_databases(Path.cwd())
         return True
     if (cli_args.consolidar or cli_args.lexis_reset) and not cli_args.canal:
-        consolidar_por_canal(str(Path.cwd()), reset_mode_bool=cli_args.lexis_reset)
+        consolidar_por_canal(str(Path.cwd()), reset_mode_bool=cli_args.lexis_reset)  # -j / --juntar / --consolidar
         return True
     return False
 
@@ -2347,22 +2434,124 @@ def _run_multi_channel_flow(channels_list: list[str], cli_args_ns: argparse.Name
     stats_list = [0, 0, 0, 0, 0] # dl, skip, err, tot, chan_tot
     interrupted_bool = False
     
-    try:
+    # Se o módulo _interpreters estiver disponível, executa canais concorrentemente via Subinterpretadores (Python 3.14+)
+    if _interpreters is not None and len(channels_list) > 1:
+        print_info("CPython 3.14: Inicializando Subinterpretadores independentes com per-interpreter GIL...")
+        threads = []
+        temp_files = []
+        interpreters_to_destroy = []
+        
+        cli_args_ns_dict = vars(cli_args_ns)
+        script_dir_path = Path(__file__).parent.resolve()
+        
         for idx_int, channel_str in enumerate(channels_list, 1):
-            cli_args_ns.canal = channel_str
-            res_tuple = _process_channel_sync_item(
-                channel_str, cli_args_ns, idx_int, is_multi_bool, 
-                global_cookies_list=global_cookies_list
-            )
-            if res_tuple:
-                _accumulate_multi_stats(stats_list, res_tuple)
-                if res_tuple[5]:
-                    interrupted_bool = True
-                    break
-    except KeyboardInterrupt:
-        interrupted_bool = True
-        print()
-        print_warn(f"Interrompido pelo usuário. {DIM}Encerrando sincronização...{RESET}")
+            temp_file_path = cwd_path / f".escriba_stats_{idx_int}.json"
+            temp_files.append((temp_file_path, idx_int))
+            
+            try:
+                sub_id = _interpreters.create()
+                sub_id_int = sub_id[0] if isinstance(sub_id, tuple) else sub_id
+                interpreters_to_destroy.append(sub_id_int)
+                
+                # Código a ser executado isoladamente em cada subinterpretador
+                code = f"""
+import sys
+sys.path.insert(0, r"{script_dir_path}")
+import escriba
+import json
+from pathlib import Path
+
+# Reconstituir cli_args_ns
+args_dict = {cli_args_ns_dict}
+class CLIArgs:
+    def __init__(self, d):
+        for k, v in d.items():
+            setattr(self, k, v)
+cli_args_ns = CLIArgs(args_dict)
+
+# Configura o canal atual para este subinterpretador
+cli_args_ns.canal = {repr(channel_str)}
+
+# Executa o processamento do canal
+res = escriba._process_channel_sync_item(
+    {repr(channel_str)}, cli_args_ns, {idx_int}, {is_multi_bool},
+    global_cookies_list={repr(global_cookies_list)}
+)
+
+# Grava o resultado no arquivo temporario
+temp_path = Path(r"{temp_file_path}")
+try:
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(res, f)
+except Exception:
+    pass
+"""
+                
+                def _thread_target(s_id, c_string, ch_name):
+                    try:
+                        _interpreters.run_string(s_id, c_string)
+                    except Exception as e:
+                        print_err(f"Erro no subinterpretador para o canal {ch_name}: {e}")
+                
+                t = threading.Thread(target=_thread_target, args=(sub_id_int, code, channel_str), name=f"Escriba-{channel_str}")
+                threads.append(t)
+                
+            except Exception as e:
+                print_err(f"Falha ao inicializar subinterpretador para o canal {channel_str}: {e}")
+                
+        # Executa todas as threads em paralelo
+        for t in threads:
+            t.start()
+            
+        # Aguarda a conclusão
+        for t in threads:
+            try:
+                t.join()
+            except KeyboardInterrupt:
+                interrupted_bool = True
+                
+        # Recupera as estatísticas de cada subinterpretador
+        for temp_file_path, idx_int in temp_files:
+            if temp_file_path.exists():
+                try:
+                    with open(temp_file_path, "r", encoding="utf-8") as f:
+                        res_tuple = json.load(f)
+                    if res_tuple:
+                        _accumulate_multi_stats(stats_list, res_tuple)
+                        if res_tuple[5]:
+                            interrupted_bool = True
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        temp_file_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                        
+        # Destrói os subinterpretadores
+        for sub_id_int in interpreters_to_destroy:
+            try:
+                _interpreters.destroy(sub_id_int)
+            except Exception:
+                pass
+    else:
+        # Fallback: executa de forma sequencial (comportamento clássico)
+        try:
+            for idx_int, channel_str in enumerate(channels_list, 1):
+                cli_args_ns.canal = channel_str
+                res_tuple = _process_channel_sync_item(
+                    channel_str, cli_args_ns, idx_int, is_multi_bool, 
+                    global_cookies_list=global_cookies_list
+                )
+                if res_tuple:
+                    _accumulate_multi_stats(stats_list, res_tuple)
+                    if res_tuple[5]:
+                        interrupted_bool = True
+                        break
+        except KeyboardInterrupt:
+            interrupted_bool = True
+            print()
+            print_warn(f"Interrompido pelo usuário. {DIM}Encerrando sincronização...{RESET}")
 
     print_info(f"\nTodos os {BOLD}{len(channels_list)}{RESET} canal(is) verificados.")
     _finish_session_flow((*stats_list, interrupted_bool), cli_args_ns, cwd_path, multi=is_multi_bool)
@@ -2445,7 +2634,7 @@ def _finish_session_flow(res_tuple: tuple, cli_args_ns: argparse.Namespace, cwd_
     print_section("Resumo Multi-Canal" if multi else "Resumo")
     print_summary(dl_int, sk_int, er_int, tot_int, chan_tot_int)
     if (cli_args_ns.consolidar or cli_args_ns.lexis_reset):
-        consolidar_por_canal(str(cwd_path), reset_mode_bool=cli_args_ns.lexis_reset)
+        consolidar_por_canal(str(cwd_path), reset_mode_bool=cli_args_ns.lexis_reset)  # -j / --juntar / --consolidar
     if interrupted_bool:
         sys.exit(130)
 
