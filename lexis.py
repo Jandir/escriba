@@ -49,6 +49,9 @@ from datetime import datetime
 from typing import List, Dict, Tuple, Optional, Set, Pattern, Any
 from utils import print_ok, print_err, print_warn, print_info, print_section, extract_video_id, format_date, BOLD, RESET, DIM
 
+# BOLT OPTIMIZATION: Pre-compile HTML tag stripping regex to avoid recompiling in hot loops
+HTML_TAG_RE: Pattern = re.compile(r'<[^>]*>')
+
 # Nome da pasta onde guardamos os arquivos originais após o processamento.
 # Isso mantém a pasta principal limpa e organizada.
 ARCHIVE_DIR_NAME: str = "archive" 
@@ -122,7 +125,7 @@ def _process_subtitle_block(raw_text_str: str, subtitle_blocks_list: List[List[s
     Esta função garante que guardamos apenas a parte inédita de cada bloco.
     """
     # Remove qualquer tag entre < > (como <font color="white">) usando Regex simples
-    clean_text_str: str = re.sub(r'<[^>]*>', '', raw_text_str)
+    clean_text_str: str = HTML_TAG_RE.sub('', raw_text_str)
     
     # Divide o texto em linhas e remove espaços inúteis nas pontas.
     # Usamos list comprehension para ser mais pythônico e performático.
