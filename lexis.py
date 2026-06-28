@@ -1049,11 +1049,34 @@ def _orchestrate_consolidation(channel_name_str: str, files_list_list: List[str]
         if vid_id and vid_id in global_meta_dict_dict:
             _enrich_metadata(m, global_meta_dict_dict[vid_id])
 
-    for index_int, f_str in enumerate(files_list_list):
-        fpath_str: str = os.path.join(os.path.dirname(paths_dict["state"]), f_str)
-        
-        # Processa o arquivo individualmente (limpeza de legendas + cabeçalho lexis)
-        block_str, meta_dict_dict = _process_single_file(fpath_str, f_str, global_meta_dict_dict)
+    # Pré-processa os arquivos concorrentemente usando um ThreadPoolExecutor (I/O Bound)
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _load_and_process_task(f_str: str) -> tuple[str, str, dict]:
+        fpath_str = os.path.join(os.path.dirname(paths_dict["state"]), f_str)
+        block_str, meta_dict = _process_single_file(fpath_str, f_str, global_meta_dict_dict)
+        return f_str, block_str, meta_dict
+
+    max_workers = min(len(files_list_list), 16)
+    pre_processed_results: list[tuple[str, str, dict]] = []
+
+    if max_workers > 1:
+        print_info(f"Consolidação: Pré-processando {len(files_list_list)} arquivos concorrentemente ({max_workers} threads)...")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submete mantendo a ordem original dos arquivos
+            futures = [executor.submit(_load_and_process_task, f_str) for f_str in files_list_list]
+            for fut in futures:
+                try:
+                    pre_processed_results.append(fut.result())
+                except Exception as e:
+                    # _process_single_file já trata exceções internas por arquivo
+                    pass
+    else:
+        for f_str in files_list_list:
+            pre_processed_results.append(_load_and_process_task(f_str))
+
+    # Consolida os blocos pré-processados de forma sequencial na memória
+    for f_str, block_str, meta_dict_dict in pre_processed_results:
         if not block_str:
             continue
 
