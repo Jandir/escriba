@@ -739,7 +739,11 @@ def _parse_volume_manifest(file_path_str: str, files_set_set: Set[str], ids_set_
                 elif raw_line_str.startswith("ID: "):
                     vid_id_str: str = raw_line_str.strip().replace("ID: ", "")
                     if vid_id_str and vid_id_str != "Sem ID":
-                        ids_set_set.add(vid_id_str)
+                        # Validação para evitar IDs corrompidos ou fatiados incorretamente
+                        is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
+                        is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
+                        if is_youtube or is_vimeo:
+                            ids_set_set.add(vid_id_str)
     except Exception:
         # Se um arquivo estiver ilegível, apenas ignoramos este bloco específico
         pass

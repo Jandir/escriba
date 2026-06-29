@@ -76,14 +76,18 @@ def _get_history_search_dirs(cwd_path: Path) -> List[Path]:
     
     Explicação para Iniciantes:
     Filtramos pastas de controle como '.git' (onde o Git salva o histórico do repositório),
-    '.venv' (ambiente virtual do Python) e '__pycache__' (bytecode compilado do Python).
-    Não faz sentido varrer essas pastas porque elas contêm arquivos binários do sistema
-    e varrê-las tornaria o processo incrivelmente lento.
+    '.venv' (ambiente virtual do Python), '__pycache__' (bytecode compilado do Python)
+    e pastas de backup (.bak, .backup).
+    Não faz sentido varrer essas pastas porque elas contêm arquivos binários do sistema,
+    dados duplicados ou antigos, e varrê-las tornaria o processo incrivelmente lento e impreciso.
     """
     try:
         ignore_names_set: set[str] = {".git", ".venv", "__pycache__"}
-        # List Comprehension: Cria uma lista filtrando pastas no disco que não estejam no conjunto ignorado.
-        return [cwd_path] + [d_path for d_path in cwd_path.iterdir() if d_path.is_dir() and d_path.name not in ignore_names_set]
+        # List Comprehension: Cria uma lista filtrando pastas no disco que não estejam no conjunto ignorado ou terminando com .bak/.backup.
+        return [cwd_path] + [
+            d_path for d_path in cwd_path.iterdir() 
+            if d_path.is_dir() and d_path.name not in ignore_names_set and not d_path.name.endswith(".bak") and not d_path.name.endswith(".backup")
+        ]
     except Exception:
         # Se ocorrer erro de permissão ao ler alguma pasta, retorna apenas a pasta principal (cwd)
         return [cwd_path]

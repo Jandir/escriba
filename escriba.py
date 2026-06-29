@@ -1104,6 +1104,7 @@ def _add_behavior_args(parser_obj: argparse.ArgumentParser) -> None:
     parser_obj.add_argument("--ignore-metadata", action="store_true", help="Pula a auto-recuperação de datas e títulos ausentes no histórico JSON")
     parser_obj.add_argument("--retry-nosub", action="store_true", help="Tenta baixar novamente as legendas de vídeos marcados como 'sem legenda'")
     parser_obj.add_argument("-dv", "--download-video", action="store_true", help="Baixa o vídeo no formato Full HD (1080p, sem áudio)")
+    parser_obj.add_argument("--limit", type=int, default=None, metavar="LIMIT", help="Limita o número de novos vídeos a baixar nesta sessão")
 
 
 
@@ -1117,6 +1118,7 @@ def _add_utility_args(parser_obj: argparse.ArgumentParser) -> None:
     parser_obj.add_argument("--migrate", action="store_true", help="Adapta bancos de dados JSON antigos para a nova versão")
     parser_obj.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, metavar="FLOAT",
                            help=f"Sensibilidade de deteccao de topicos (0.0-1.0). Padrao: {DEFAULT_THRESHOLD}")
+    parser_obj.add_argument("--status", action="store_true", help="Exibe o status consolidado de todos os canais locais em formato JSON")
     parser_obj.add_argument("-v", "--version", action="version", version=f"Versão: {VERSION}")
 
 
@@ -1656,6 +1658,8 @@ def process_videos(
 
         # Partição final: apenas vídeos que realmente precisam ser baixados
         to_download = [v for v in working_list if v["video_id"] not in all_skip_ids]
+        if getattr(cli_args_ns, "limit", None) is not None and cli_args_ns.limit > 0:
+            to_download = to_download[:cli_args_ns.limit]
         n_total     = len(working_list)
         pre_skipped = n_total - len(to_download)
 
@@ -2318,7 +2322,8 @@ def _run_direct_video_download_flow(cli_args_ns: argparse.Namespace) -> None:
 
 def main() -> None:
     setup_sigint_handler()
-    print_header(VERSION)
+    if "--status" not in sys.argv:
+        print_header(VERSION)
     cli_args_ns = parse_args()
     _normalize_canal_arg(cli_args_ns)
 
@@ -2345,9 +2350,11 @@ def main() -> None:
 def _run_main_sync_flow(json_path: Path, user_canal_str: str | None, cli_args_ns: argparse.Namespace, cwd_path: Path) -> None:
     """Executa o fluxo principal de sincronização (multi-canal ou padrão)."""
     channels_list = _get_channels_to_sync(json_path, user_canal_str)
-    if channels_list:
+    if len(channels_list) > 1:
         _run_multi_channel_flow(channels_list, cli_args_ns, cwd_path)
     else:
+        if len(channels_list) == 1:
+            cli_args_ns.canal = channels_list[0]
         _run_default_flow(cli_args_ns)
 
 
@@ -2363,8 +2370,67 @@ def _normalize_canal_arg(cli_args: argparse.Namespace) -> None:
         cli_args.canal = " ".join(cli_args.canal)
 
 
+def exibir_status_canais_json() -> None:
+    """Localiza todos os arquivos de banco de dados escriba_*.json na pasta de trabalho e exibe suas estatísticas como JSON."""
+    import json
+    from pathlib import Path
+    
+    cwd_path = Path.cwd()
+    db_files = list(cwd_path.glob("escriba_*.json")) + list(cwd_path.glob("lista_*.json"))
+    seen = set()
+    unique_dbs = []
+    for p in db_files:
+        resolved = p.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            unique_dbs.append(p)
+            
+    channels_status = []
+    for db_path in unique_dbs:
+        try:
+            with open(db_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            videos = data.get("videos")
+            if not isinstance(videos, list):
+                if isinstance(data, list):
+                    videos = data
+                    data = {}
+                else:
+                    videos = []
+                    
+            total_videos = len(videos)
+            downloaded = sum(1 for v in videos if v.get("subtitle_downloaded"))
+            no_subtitle = sum(1 for v in videos if v.get("has_no_subtitle"))
+            pending = total_videos - downloaded - no_subtitle
+            
+            channels_status.append({
+                "banco_dados": db_path.name,
+                "caminho_absoluto": str(db_path.resolve()),
+                "idioma_detectado": data.get("detected_language") if isinstance(data, dict) else None,
+                "canais_youtube": data.get("youtube_channels", []) if isinstance(data, dict) else [],
+                "canais_vimeo": data.get("vimeo_channels", []) if isinstance(data, dict) else [],
+                "estatisticas": {
+                    "total_videos": total_videos,
+                    "baixados": downloaded,
+                    "sem_legenda": no_subtitle,
+                    "pendentes": pending
+                }
+            })
+        except Exception as e:
+            channels_status.append({
+                "banco_dados": db_path.name,
+                "erro": str(e)
+            })
+            
+    print(json.dumps(channels_status, indent=4, ensure_ascii=False))
+
+
 def _handle_cli_pre_flows(cli_args: argparse.Namespace) -> bool:
     """Executa fluxos de pré-processamento disparados por flags da CLI."""
+    if cli_args.status:
+        exibir_status_canais_json()
+        return True
     if cli_args.regen_md:
         regen_md_from_srt_files(force_bool=getattr(cli_args, 'force', False))
         return True
@@ -2434,8 +2500,8 @@ def _run_multi_channel_flow(channels_list: list[str], cli_args_ns: argparse.Name
     stats_list = [0, 0, 0, 0, 0] # dl, skip, err, tot, chan_tot
     interrupted_bool = False
     
-    # Se o módulo _interpreters estiver disponível, executa canais concorrentemente via Subinterpretadores (Python 3.14+)
-    if _interpreters is not None and len(channels_list) > 1:
+    # Desativado: Subinterpretadores são incompatíveis com yt-dlp/urllib3 (daemon threads são proibidas em subinterpretadores)
+    if False and _interpreters is not None and len(channels_list) > 1:
         print_info("CPython 3.14: Inicializando Subinterpretadores independentes com per-interpreter GIL...")
         threads = []
         temp_files = []
