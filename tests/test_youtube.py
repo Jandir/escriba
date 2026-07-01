@@ -19,17 +19,23 @@ def test_filter_youtube_cookies_logic(tmp_path: Path):
     content_str: str = (
         "# Netscape HTTP Cookie File\n"
         ".youtube.com\tTRUE\t/\tFALSE\t0\tSID\tvalue1\n"
-        ".google.com\tTRUE\t/\tFALSE\t0\tGAIA\tvalue2\n"
+        "#HttpOnly_.google.com\tTRUE\t/\tFALSE\t0\tGAIA\tvalue2\n"
         ".other.com\tTRUE\t/\tFALSE\t0\tID\tvalue3\n"
+        "evilyoutube.com\tTRUE\t/\tFALSE\t0\tID\tvalue4\n"
+        ".notyoutube.com\tTRUE\t/\tFALSE\t0\tID\tvalue5\n"
+        "#HttpOnly_.evil.com\tTRUE\t/\tFALSE\t0\tID\tvalue6\n"
     )
     cookies_file_path.write_text(content_str, encoding="utf-8")
     
     filter_youtube_cookies(cookies_file_path)
     
     result_str: str = cookies_file_path.read_text(encoding="utf-8")
-    assert "youtube.com" in result_str
-    assert "google.com" in result_str
-    assert "other.com" not in result_str
+    assert "value1" in result_str
+    assert "value2" in result_str
+    assert "value3" not in result_str
+    assert "value4" not in result_str
+    assert "value5" not in result_str
+    assert "value6" not in result_str
     assert "# Netscape" in result_str
 
 def test_filter_youtube_cookies_missing_file():
