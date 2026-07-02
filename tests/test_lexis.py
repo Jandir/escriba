@@ -100,10 +100,10 @@ def test_parse_volume_manifest(tmp_path):
     volume_file_path = tmp_path / "Volume_1.txt"
     volume_content_str: str = (
         "ARQUIVO: video_orig.md\n"
-        "ID: XYZ789\n"
+        "ID: XYZ789ABC12\n"
         "Algum texto aqui...\n"
         "ARQUIVO: outro.txt\n"
-        "ID: ABC123\n"
+        "ID: 12345678\n"
     )
     volume_file_path.write_text(volume_content_str, encoding="utf-8")
     
@@ -114,8 +114,8 @@ def test_parse_volume_manifest(tmp_path):
     
     assert "video_orig.md" in files_set
     assert "outro.txt" in files_set
-    assert "XYZ789" in ids_set
-    assert "ABC123" in ids_set
+    assert "XYZ789ABC12" in ids_set
+    assert "12345678" in ids_set
 
 def test_enrich_metadata():
     """Verifica o preenchimento de metadados faltantes usando a base global."""
