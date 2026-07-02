@@ -43,6 +43,7 @@ if sys.platform == "win32":
         pass
 
 import re
+HTML_TAG_PATTERN = re.compile(r"<[^>]*>")
 import shutil
 import json
 from datetime import datetime
@@ -122,7 +123,7 @@ def _process_subtitle_block(raw_text_str: str, subtitle_blocks_list: List[List[s
     Esta função garante que guardamos apenas a parte inédita de cada bloco.
     """
     # Remove qualquer tag entre < > (como <font color="white">) usando Regex simples
-    clean_text_str: str = re.sub(r'<[^>]*>', '', raw_text_str)
+    clean_text_str: str = HTML_TAG_PATTERN.sub('', raw_text_str)
     
     # Divide o texto em linhas e remove espaços inúteis nas pontas.
     # Usamos list comprehension para ser mais pythônico e performático.
