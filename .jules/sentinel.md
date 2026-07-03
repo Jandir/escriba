@@ -1,0 +1,4 @@
+## 2025-02-28 - Secure Cookie Filtering
+**Vulnerability:** The cookie file filtering logic used simple substring matching (`"youtube.com" in line_str`) to filter domains. This is dangerous because it would allow malicious domains containing the string, such as `evilyoutube.com` or `youtube.com.malicious.com`, to steal cookies. It also improperly parsed `#HttpOnly_` prefixes.
+**Learning:** Parsing Netscape HTTP Cookie files requires strict validation of the domain column. A simple string inclusion check is insufficient and leads to Cross-Domain leakage risks.
+**Prevention:** Always split Netscape cookie lines by tabs (`\t`) to isolate the domain. Use `.endswith('.youtube.com') or domain == 'youtube.com'` to strictly validate subdomains and domains, and handle `#HttpOnly_` prefixes correctly without treating them as comments.
