@@ -530,6 +530,10 @@ def _seg_keywords(seg_wins_list: list, tfidf_vec_obj, tfidf_mat_obj, win_indices
         if len(keywords_list) >= top_n_int: break
     return " · ".join(keywords_list) if keywords_list else ""
 
+# BOLT OPTIMIZATION:
+# Pre-compiled regex patterns for string parsing in hot paths to avoid on-the-fly regex cache lookup and compilation overhead.
+_HTML_TAGS_PATTERN = re.compile(r"<[^>]+>")
+
 def create_adaptive_windows(subs_list, window_size_s_int: int) -> tuple[list[dict], dict]:
     """Agrupa legendas em janelas adaptativas. Retorna (windows, clean_texts)."""
     windows_list: list[dict] = []
@@ -538,7 +542,7 @@ def create_adaptive_windows(subs_list, window_size_s_int: int) -> tuple[list[dic
     start_time_obj = subs_list[0].start
     prev_sub_text_str: str = ""
     for sub_obj in subs_list:
-        raw_text_str: str = re.sub(r"<[^>]+>", "", sub_obj.text.replace('\n', ' ')).strip()
+        raw_text_str: str = _HTML_TAGS_PATTERN.sub("", sub_obj.text.replace('\n', ' ')).strip()
         clean_text_str: str = _strip_rollup(raw_text_str, prev_sub_text_str)
         if clean_text_str:
             prev_sub_text_str = raw_text_str
@@ -663,13 +667,15 @@ def _dedup_lines(lines: list[str]) -> list[str]:
         out.append(line)
     return out
 
+_CAPITALIZE_PATTERN = re.compile(r'(^|[.!?]\s+)(\w)')
+
 def _flush_paragraph(lines: list[str], para_ts: str, out: list[str]) -> None:
     """Normaliza e emite um parágrafo capturado, com âncora de tempo."""
     if not lines:
         return
     text = " ".join(" ".join(lines).split())
     if text:
-        text = re.sub(r'(^|[.!?]\s+)(\w)', lambda m: m.group(0)[:-1] + m.group(0)[-1].upper(), text)
+        text = _CAPITALIZE_PATTERN.sub(lambda m: m.group(0)[:-1] + m.group(0)[-1].upper(), text)
         out.append(f"[{para_ts}] {clean_ekklezia_terms(text)}\n\n")
 
 def _init_md_processing(srt_path: Path, indentation_prefix: str) -> tuple | None:
@@ -715,7 +721,7 @@ def _setup_vectorizer(srt_path_name: str, windows: list[dict]):
 
 def _process_sub_into_para(sub, para_start_time, para_lines_list, md_lines, sentence_end_re, clean_texts=None):
     """Processa uma única legenda dentro de um parágrafo."""
-    sub_text_str = (clean_texts or {}).get(id(sub)) or re.sub(r"<[^>]+>", "", sub.text.replace('\n', ' ')).strip()
+    sub_text_str = (clean_texts or {}).get(id(sub)) or _HTML_TAGS_PATTERN.sub("", sub.text.replace('\n', ' ')).strip()
     sub_text_str = " ".join(sub_text_str.split())
     if not sub_text_str: return para_start_time, para_lines_list
     if para_start_time is None: para_start_time = sub.start

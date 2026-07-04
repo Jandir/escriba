@@ -107,6 +107,10 @@ def clean_srt_content(subtitle_content_str: str) -> str:
     return ' '.join(cleaned_lines_list)
 
 
+# BOLT OPTIMIZATION:
+# Pre-compiled regex patterns for string parsing in hot paths to avoid on-the-fly regex cache lookup and compilation overhead.
+_HTML_TAG_PATTERN: Pattern = re.compile(r'<[^>]*>')
+
 def _process_subtitle_block(raw_text_str: str, subtitle_blocks_list: List[List[str]]) -> None:
     """
     Limpa tags HTML (como <b> ou <font>) e decide se o texto é novo ou repetido.
@@ -122,7 +126,7 @@ def _process_subtitle_block(raw_text_str: str, subtitle_blocks_list: List[List[s
     Esta função garante que guardamos apenas a parte inédita de cada bloco.
     """
     # Remove qualquer tag entre < > (como <font color="white">) usando Regex simples
-    clean_text_str: str = re.sub(r'<[^>]*>', '', raw_text_str)
+    clean_text_str: str = _HTML_TAG_PATTERN.sub('', raw_text_str)
     
     # Divide o texto em linhas e remove espaços inúteis nas pontas.
     # Usamos list comprehension para ser mais pythônico e performático.
