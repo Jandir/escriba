@@ -57,6 +57,33 @@ def test_download_video_command_construction_vimeo():
         assert download_calls_params[-1].get("format") == "bestvideo[height<=1080]"
 
 
+def test_filter_vimeo_cookies_logic(tmp_path: Path):
+    """Verifica se a filtragem de cookies remove domínios não autorizados e mantém os do Vimeo/Akamai."""
+    from vimeo import filter_vimeo_cookies
+
+    cookies_file_path: Path = tmp_path / "cookies.txt"
+    content_str: str = (
+        "# Netscape HTTP Cookie File\n"
+        ".vimeo.com\tTRUE\t/\tFALSE\t0\tSID\tvalue1\n"
+        ".akamaized.net\tTRUE\t/\tFALSE\t0\tCDN\tvalue2\n"
+        ".other.com\tTRUE\t/\tFALSE\t0\tID\tvalue3\n"
+        "fake-vimeo.com\tTRUE\t/\tFALSE\t0\tID\tvalue4\n"
+        "#HttpOnly_.vimeo.com\tTRUE\t/\tTRUE\t0\tSECURE_ID\tvalue5\n"
+    )
+    cookies_file_path.write_text(content_str, encoding="utf-8")
+
+    filter_vimeo_cookies(cookies_file_path)
+
+    result_str: str = cookies_file_path.read_text(encoding="utf-8")
+    assert "SID\tvalue1" in result_str
+    assert "CDN\tvalue2" in result_str
+    assert "SECURE_ID\tvalue5" in result_str
+    assert "value3" not in result_str
+    assert "value4" not in result_str
+    assert "fake-vimeo.com" not in result_str
+    assert "# Netscape" in result_str
+
+
 def test_download_video_invalid_id_vimeo():
     """Verifica se IDs inválidos/truncados de Vimeo retornam código 2 imediatamente."""
     from vimeo import download_video
