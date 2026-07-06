@@ -1,0 +1,5 @@
+
+## 2025-02-28 - Cross-Domain Cookie Leakage in Netscape Cookie Parsing
+**Vulnerability:** Cookie filtering functions (`filter_youtube_cookies` and `filter_vimeo_cookies`) were extracting and scrubbing browser cookies but relied on loose substring matching like `"youtube.com" in line`. This allowed malicious domains (e.g., `malicious-youtube.com`) to retain their cookies in the final `cookies.txt` file alongside the intended domains.
+**Learning:** Netscape HTTP Cookie files contain sensitive credential data, and the `yt-dlp` tool retrieves all browser cookies prior to filtering. Applying weak or loose domain validation checks when parsing such security files presents a significant cross-domain cookie leakage vulnerability.
+**Prevention:** When parsing Netscape HTTP Cookie files, always split lines strictly by tabs (`\t`), check for minimum expected fields, process the domain column with precise prefix stripping (`#HttpOnly_`), and enforce strict suffix checks (`domain.endswith('.youtube.com')` or `domain == 'youtube.com'`).
