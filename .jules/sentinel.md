@@ -1,0 +1,4 @@
+## 2024-05-24 - Cross-Domain Cookie Leakage in Netscape Formats
+**Vulnerability:** A cookie domain validation function used broad substring searches (`"youtube.com" in line`) instead of strict exact or suffix matching against specific column fields.
+**Learning:** Netscape HTTP Cookie Files are tab-separated values. When sanitizing or filtering these files, failing to split by `\t` and strictly validating the domain column allows domains like `fakeyoutube.com` or paths containing `youtube.com` to bypass filters. Additionally, `#HttpOnly_` prefix is considered a comment in some generic regex parsers but actually indicates a valid, protected cookie in this specific format.
+**Prevention:** Always parse Netscape cookie files by splitting lines by `\t`. Validate the domain column using exact match or proper suffix matching (`domain == "youtube.com" or domain.endswith(".youtube.com")`), and explicitly handle the `#HttpOnly_` prefix before domain validation.
