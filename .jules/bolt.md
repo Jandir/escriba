@@ -4,3 +4,6 @@
 ## 2026-03-02 - Object instantiation vs primitive strings in hot paths
 **Learning:** Instantiating `Path` objects in Python just to use `.name` inside functions called repeatedly inside tight loops adds measurable performance overhead. Pre-compiling `re` regular expressions into global variables also significantly speeds up function calls compared to calling `re.sub` directly each time.
 **Action:** When working on frequently-called string processing functions, prefer native string primitives and `os.path` functions like `os.path.basename` to avoid object instantiation overhead. Always globally pre-compile regexes.
+## 2026-03-03 - Path instantiation overhead and Regex pre-compilation
+**Learning:** Pre-compiling `re` regular expressions into global variables significantly speeds up function calls compared to calling `re.sub` directly each time, particularly in tight loops (like iterating over subtitle lines). Similarly, instantiating `Path` objects in Python just to use `.name` inside list comprehensions adds measurable performance overhead compared to primitive `os.path.basename` calls.
+**Action:** Always pre-compile regexes globally and prefer primitive operations over object instantiation in hot loops to reduce parsing overhead and improve runtime speed.

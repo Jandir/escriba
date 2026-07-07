@@ -80,6 +80,12 @@ import argparse
 import glob
 import json
 import re
+# BOLT OPTIMIZATION:
+# Pre-compile regexes globally and prefer primitive operations over object instantiation (e.g. os.path.basename over Path().name)
+# in hot loops to significantly reduce parsing overhead and improve runtime speed.
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_SENTENCE_START_RE = re.compile(r'(^|[.!?]\s+)(\w)')
+_WEBVTT_HEADER_RE = re.compile(r"^WEBVTT.*?\n\n", flags=re.DOTALL)
 import random
 import threading
 try:
@@ -538,7 +544,7 @@ def create_adaptive_windows(subs_list, window_size_s_int: int) -> tuple[list[dic
     start_time_obj = subs_list[0].start
     prev_sub_text_str: str = ""
     for sub_obj in subs_list:
-        raw_text_str: str = re.sub(r"<[^>]+>", "", sub_obj.text.replace('\n', ' ')).strip()
+        raw_text_str: str = _HTML_TAG_RE.sub("", sub_obj.text.replace('\n', ' ')).strip()
         clean_text_str: str = _strip_rollup(raw_text_str, prev_sub_text_str)
         if clean_text_str:
             prev_sub_text_str = raw_text_str
@@ -669,7 +675,7 @@ def _flush_paragraph(lines: list[str], para_ts: str, out: list[str]) -> None:
         return
     text = " ".join(" ".join(lines).split())
     if text:
-        text = re.sub(r'(^|[.!?]\s+)(\w)', lambda m: m.group(0)[:-1] + m.group(0)[-1].upper(), text)
+        text = _SENTENCE_START_RE.sub(lambda m: m.group(0)[:-1] + m.group(0)[-1].upper(), text)
         out.append(f"[{para_ts}] {clean_ekklezia_terms(text)}\n\n")
 
 def _init_md_processing(srt_path: Path, indentation_prefix: str) -> tuple | None:
@@ -715,7 +721,7 @@ def _setup_vectorizer(srt_path_name: str, windows: list[dict]):
 
 def _process_sub_into_para(sub, para_start_time, para_lines_list, md_lines, sentence_end_re, clean_texts=None):
     """Processa uma única legenda dentro de um parágrafo."""
-    sub_text_str = (clean_texts or {}).get(id(sub)) or re.sub(r"<[^>]+>", "", sub.text.replace('\n', ' ')).strip()
+    sub_text_str = (clean_texts or {}).get(id(sub)) or _HTML_TAG_RE.sub("", sub.text.replace('\n', ' ')).strip()
     sub_text_str = " ".join(sub_text_str.split())
     if not sub_text_str: return para_start_time, para_lines_list
     if para_start_time is None: para_start_time = sub.start
@@ -861,7 +867,7 @@ def _find_and_select_subtitle(cwd_path: Path, channel_dir_name: str, video_id: s
         prefix_base = channel_dir_name.split('.')[0]
         fallback_pattern = str(cwd_path / f"{prefix_base}*.srt")
         fallback_matches = glob.glob(fallback_pattern)
-        valid_fallbacks = [f for f in fallback_matches if "-" not in Path(f).name]
+        valid_fallbacks = [f for f in fallback_matches if "-" not in os.path.basename(f)]
         
         if valid_fallbacks:
             for f_str in valid_fallbacks:
@@ -906,7 +912,7 @@ def convert_vtt_to_srt(vtt_path: Path) -> Path:
     
     # Remove o cabeçalho WEBVTT
     if content.startswith("WEBVTT"):
-        content = re.sub(r"^WEBVTT.*?\n\n", "", content, flags=re.DOTALL)
+        content = _WEBVTT_HEADER_RE.sub("", content)
     
     blocks = content.split("\n\n")
     srt_blocks = []
@@ -964,7 +970,7 @@ def _auto_convert_vtt_to_srt(cwd_path: Path, channel_dir_name: str, video_id_str
         prefix_base = channel_dir_name.split('.')[0]
         fallback_pattern = str(cwd_path / f"{prefix_base}*.vtt")
         fallback_matches = glob.glob(fallback_pattern)
-        matches_list = [f for f in fallback_matches if "-" not in Path(f).name]
+        matches_list = [f for f in fallback_matches if "-" not in os.path.basename(f)]
         
     for vtt_path_str in matches_list:
         vtt_path = Path(vtt_path_str)
