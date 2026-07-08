@@ -4,3 +4,6 @@
 ## 2026-03-02 - Object instantiation vs primitive strings in hot paths
 **Learning:** Instantiating `Path` objects in Python just to use `.name` inside functions called repeatedly inside tight loops adds measurable performance overhead. Pre-compiling `re` regular expressions into global variables also significantly speeds up function calls compared to calling `re.sub` directly each time.
 **Action:** When working on frequently-called string processing functions, prefer native string primitives and `os.path` functions like `os.path.basename` to avoid object instantiation overhead. Always globally pre-compile regexes.
+## 2026-03-03 - Avoiding Redundant File System Calls (Syscalls)
+**Learning:** When sorting or filtering files based on properties like modification time (mtime), checking `path.exists()` and then calling `path.stat()` results in two separate syscalls to the operating system. In directories with many files, this redundant syscall overhead accumulates and becomes a measurable performance bottleneck.
+**Action:** Avoid double stat calls by using a `try...except OSError` block. Instead of checking existence first, attempt the `stat()` directly and catch the error if the file doesn't exist, cutting the number of syscalls in half.

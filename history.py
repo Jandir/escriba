@@ -43,9 +43,19 @@ def _find_legacy_databases(cwd_path: Path) -> List[Path]:
     for pattern_str in patterns_list:
         found_paths_list.extend(list(cwd_path.glob(pattern_str)))
     
+    # BOLT OPTIMIZATION:
+    # A função auxiliar evita a dupla chamada ao sistema de arquivos (uma vez por `exists()` e outra por `stat()`).
+    # O `stat()` é uma chamada de sistema (syscall) relativamente lenta. Tratar a exceção reduz
+    # o custo pela metade em diretórios com muitos arquivos.
+    def get_mtime(x_path: Path) -> float:
+        try:
+            return x_path.stat().st_mtime
+        except OSError:
+            return 0.0
+
     # Lambda é uma função anônima de uma única linha. Aqui ela diz ao 'sorted': 
     # "Ordene esta lista de caminhos comparando o tempo de modificação do arquivo".
-    return sorted(found_paths_list, key=lambda x_path: x_path.stat().st_mtime if x_path.exists() else 0, reverse=True)
+    return sorted(found_paths_list, key=get_mtime, reverse=True)
 
 
 def get_latest_json_path(cwd_path: Path) -> Path:
