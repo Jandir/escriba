@@ -861,7 +861,8 @@ def _find_and_select_subtitle(cwd_path: Path, channel_dir_name: str, video_id: s
         prefix_base = channel_dir_name.split('.')[0]
         fallback_pattern = str(cwd_path / f"{prefix_base}*.srt")
         fallback_matches = glob.glob(fallback_pattern)
-        valid_fallbacks = [f for f in fallback_matches if "-" not in Path(f).name]
+        # BOLT OPTIMIZATION: Usando os.path.basename em vez de Path().name para evitar overhead de instanciamento de objetos no loop.
+        valid_fallbacks = [f for f in fallback_matches if "-" not in os.path.basename(f)]
         
         if valid_fallbacks:
             for f_str in valid_fallbacks:
@@ -964,7 +965,8 @@ def _auto_convert_vtt_to_srt(cwd_path: Path, channel_dir_name: str, video_id_str
         prefix_base = channel_dir_name.split('.')[0]
         fallback_pattern = str(cwd_path / f"{prefix_base}*.vtt")
         fallback_matches = glob.glob(fallback_pattern)
-        matches_list = [f for f in fallback_matches if "-" not in Path(f).name]
+        # BOLT OPTIMIZATION: Usando os.path.basename em vez de Path().name para evitar overhead de instanciamento de objetos no loop.
+        matches_list = [f for f in fallback_matches if "-" not in os.path.basename(f)]
         
     for vtt_path_str in matches_list:
         vtt_path = Path(vtt_path_str)
