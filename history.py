@@ -43,9 +43,13 @@ def _find_legacy_databases(cwd_path: Path) -> List[Path]:
     for pattern_str in patterns_list:
         found_paths_list.extend(list(cwd_path.glob(pattern_str)))
     
-    # Lambda é uma função anônima de uma única linha. Aqui ela diz ao 'sorted': 
-    # "Ordene esta lista de caminhos comparando o tempo de modificação do arquivo".
-    return sorted(found_paths_list, key=lambda x_path: x_path.stat().st_mtime if x_path.exists() else 0, reverse=True)
+    def _safe_mtime(x_path: Path) -> float:
+        try:
+            return x_path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    return sorted(found_paths_list, key=_safe_mtime, reverse=True)
 
 
 def get_latest_json_path(cwd_path: Path) -> Path:
