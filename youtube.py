@@ -699,8 +699,24 @@ def filter_youtube_cookies(cookies_path_obj: Path) -> None:
 
         filtered_lines_list: List[str] = []
         for line_str in lines_list:
-            if line_str.startswith("#") or "youtube.com" in line_str or "google.com" in line_str:
+            # Mantém os comentários reais, garantindo que o arquivo permaneça válido.
+            # 🛡️ Sentinel: Linhas #HttpOnly_ não são comentários, são diretivas de cookie!
+            if line_str.startswith("#") and not line_str.startswith("#HttpOnly_"):
                 filtered_lines_list.append(line_str)
+                continue
+
+            # Trata cookies normais e HttpOnly
+            cookie_data = line_str[10:] if line_str.startswith("#HttpOnly_") else line_str
+            parts = cookie_data.split("\t")
+
+            # Formato Netscape tem 7 colunas: domain, flag, path, secure, expiration, name, value
+            if len(parts) >= 7:
+                domain = parts[0]
+                # 🛡️ Sentinel: Evita Cross-Domain Leak via Substring Matching
+                # Não podemos usar "youtube.com" in line_str, senão vaza pra "maliciousyoutube.com"
+                if (domain.endswith(".youtube.com") or domain == "youtube.com" or
+                    domain.endswith(".google.com") or domain == "google.com"):
+                    filtered_lines_list.append(line_str)
 
         # Grava de volta o arquivo higienizado
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:
