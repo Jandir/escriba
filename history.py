@@ -363,6 +363,17 @@ def _load_existing_json_safely(json_path: Path) -> Dict[str, Any]:
         return {}
 
 
+def _is_video_url_or_id(input_str: str) -> bool:
+    """Retorna True se a string de entrada parecer ser um vídeo individual (ID ou URL)."""
+    if re.match(r"^[A-Za-z0-9_-]{11}$", input_str) or re.match(r"^\d{7,12}$", input_str):
+        return True
+    if "watch?v=" in input_str or "youtu.be/" in input_str or "vimeo.com/" in input_str:
+        if any(x in input_str for x in ["/showcase/", "/channels/", "list="]):
+            return False
+        return True
+    return False
+
+
 def _populate_output_metadata(
     output_data_dict: Dict[str, Any], 
     existing_dict: Dict[str, Any], 
@@ -376,6 +387,8 @@ def _populate_output_metadata(
         existing_list = existing_dict.get(key_str, [])
         if isinstance(existing_list, list) and existing_list:
             output_data_dict[key_str] = existing_list
+        else:
+            output_data_dict[key_str] = []
             
     # Identifica o provedor de vídeo com base na URL
     provider_str = "vimeo" if url_str and "vimeo.com" in url_str else "youtube"
@@ -393,6 +406,21 @@ def _populate_output_metadata(
     final_url_str: Optional[str] = url_str or existing_dict.get(url_key_str) or existing_dict.get("youtube_channel") or existing_dict.get("channel")
     if final_url_str: 
         output_data_dict[url_key_str] = final_url_str
+
+    # Garante que o canal original/contexto esteja presente na lista correspondente
+    channels_list = output_data_dict.get(channels_key_str)
+    if isinstance(channels_list, list):
+        context_chan = output_data_dict.get("channel_context")
+        if context_chan:
+            norm_context = _normalize_handle(context_chan) if provider_str == "youtube" else context_chan
+            if not _is_handle_registered(norm_context, channels_list):
+                channels_list.insert(0, norm_context)
+
+        # Garante também que a URL atualmente processada esteja na lista (caso não seja vídeo individual)
+        if url_str and not _is_video_url_or_id(url_str):
+            final_url = _normalize_handle(url_str) if provider_str == "youtube" else url_str
+            if not _is_handle_registered(final_url, channels_list):
+                channels_list.append(final_url)
 
 
 def _merge_duplicate_inline(existing_dict: Dict[str, Any], new_dict: Dict[str, Any]) -> None:
@@ -732,14 +760,28 @@ def register_channel_in_json(json_path: Path, handle_str: str, provider_str: str
     if not isinstance(channels_list, list): 
         channels_list = []
         
-    if _is_handle_registered(final_handle, channels_list):
-        return False, True
-        
-    channels_list.append(final_handle)
-    data_dict[channels_key_str] = channels_list
-    success_bool = _atomic_json_dump(json_path, data_dict)
+    modified = False
     
-    return True, success_bool
+    # Garante que o canal original/contexto esteja presente na lista de canais
+    context_chan = data_dict.get("channel_context") or data_dict.get(f"{provider_str}_channel")
+    if context_chan:
+        norm_context = _normalize_handle(context_chan) if provider_str == "youtube" else context_chan
+        if not _is_handle_registered(norm_context, channels_list):
+            channels_list.insert(0, norm_context)
+            modified = True
+            
+    # Verifica se a nova URL/handle está registrada
+    is_new = not _is_handle_registered(final_handle, channels_list)
+    if is_new:
+        channels_list.append(final_handle)
+        modified = True
+        
+    if modified:
+        data_dict[channels_key_str] = channels_list
+        success_bool = _atomic_json_dump(json_path, data_dict)
+        return is_new, success_bool
+        
+    return False, True
 
 
 def _normalize_handle(handle_str: str) -> str:
