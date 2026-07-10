@@ -699,8 +699,21 @@ def filter_youtube_cookies(cookies_path_obj: Path) -> None:
 
         filtered_lines_list: List[str] = []
         for line_str in lines_list:
-            if line_str.startswith("#") or "youtube.com" in line_str or "google.com" in line_str:
+            stripped = line_str.strip()
+            # Keep standard Netscape file headers or empty lines
+            if not stripped or (stripped.startswith("#") and not stripped.startswith("#HttpOnly_")):
                 filtered_lines_list.append(line_str)
+                continue
+
+            # Parse the domain from the cookie line
+            data_line = stripped[10:] if stripped.startswith("#HttpOnly_") else stripped
+            parts = data_line.split('\t')
+
+            if len(parts) >= 7:
+                domain = parts[0]
+                if domain.endswith('.youtube.com') or domain == 'youtube.com' or \
+                   domain.endswith('.google.com') or domain == 'google.com':
+                    filtered_lines_list.append(line_str)
 
         # Grava de volta o arquivo higienizado
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:
