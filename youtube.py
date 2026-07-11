@@ -698,9 +698,22 @@ def filter_youtube_cookies(cookies_path_obj: Path) -> None:
             lines_list: List[str] = file_descriptor_obj.readlines()
 
         filtered_lines_list: List[str] = []
+        allowed_domains = ["youtube.com", "google.com"]
         for line_str in lines_list:
-            if line_str.startswith("#") or "youtube.com" in line_str or "google.com" in line_str:
+            # Mantém comentários, exceto HttpOnly que são cookies reais
+            if line_str.startswith("#") and not line_str.startswith("#HttpOnly_"):
                 filtered_lines_list.append(line_str)
+                continue
+
+            # Remove o prefixo HttpOnly para checar o domínio
+            cookie_line = line_str[10:] if line_str.startswith("#HttpOnly_") else line_str
+            parts = cookie_line.split("\t")
+            if len(parts) > 0:
+                domain = parts[0].strip()
+                for allowed in allowed_domains:
+                    if domain.endswith("." + allowed) or domain == allowed:
+                        filtered_lines_list.append(line_str)
+                        break
 
         # Grava de volta o arquivo higienizado
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:

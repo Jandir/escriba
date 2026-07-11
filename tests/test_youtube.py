@@ -14,22 +14,28 @@ from youtube import filter_youtube_cookies
 # onde podemos criar arquivos fictícios sem sujar o computador real do usuário.
 
 def test_filter_youtube_cookies_logic(tmp_path: Path):
-    """Verifica se a filtragem de cookies remove domínios não autorizados e mantém os do YouTube/Google."""
+    """Verifica se a filtragem de cookies remove domínios não autorizados e mantém os do YouTube/Google de forma segura."""
     cookies_file_path: Path = tmp_path / "cookies.txt"
     content_str: str = (
         "# Netscape HTTP Cookie File\n"
         ".youtube.com\tTRUE\t/\tFALSE\t0\tSID\tvalue1\n"
         ".google.com\tTRUE\t/\tFALSE\t0\tGAIA\tvalue2\n"
         ".other.com\tTRUE\t/\tFALSE\t0\tID\tvalue3\n"
+        "#HttpOnly_.youtube.com\tTRUE\t/\tFALSE\t0\tHSID\tvalue4\n"
+        ".evilyoutube.com\tTRUE\t/\tFALSE\t0\tEVIL\tvalue5\n"
+        "#HttpOnly_.other.com\tTRUE\t/\tFALSE\t0\tID\tvalue6\n"
     )
     cookies_file_path.write_text(content_str, encoding="utf-8")
     
     filter_youtube_cookies(cookies_file_path)
     
     result_str: str = cookies_file_path.read_text(encoding="utf-8")
-    assert "youtube.com" in result_str
-    assert "google.com" in result_str
-    assert "other.com" not in result_str
+    assert "value1" in result_str  # youtube.com normal
+    assert "value2" in result_str  # google.com normal
+    assert "value3" not in result_str  # other.com drop
+    assert "value4" in result_str  # youtube.com httponly
+    assert "value5" not in result_str  # evilyoutube.com evasion drop
+    assert "value6" not in result_str  # other.com httponly drop
     assert "# Netscape" in result_str
 
 def test_filter_youtube_cookies_missing_file():
