@@ -1,0 +1,6 @@
+## 2025-03-01 - [Insecure Cross-Domain Cookie Leakage]
+**Vulnerability:** The cookie sanitization scripts (`youtube.py` and `vimeo.py`) previously used insecure `in` string matching (e.g., `'youtube.com' in line`) to filter Netscape HTTP Cookie files. This resulted in two critical security flaws:
+1) Cross-domain cookie leakage where adversarial domains like `evilyoutube.com` were incorrectly allowed.
+2) Broken HTTPOnly processing, since cookies prefaced with `#HttpOnly_.youtube.com` were sometimes skipped or incorrectly parsed as generic `#` comments.
+**Learning:** Netscape HTTP Cookie files require strict parsing. Filtering by simple substring matching in security contexts is dangerous and enables cross-domain evasion attacks. Additionally, `#HttpOnly_` is a special case directive within Netscape Cookie standard which must be correctly stripped and processed, unlike standard `#` comments.
+**Prevention:** Always parse Netscape cookie file lines specifically using tab delimitation (`\t`). Specifically validate the domain column using suffix matching (e.g., `domain.endswith('.youtube.com')`) rather than substrings. Explicitly check for and strip `#HttpOnly_` before evaluating the domain to ensure valid secure cookies are retained while blocking malicious domains.
