@@ -107,6 +107,14 @@ def clean_srt_content(subtitle_content_str: str) -> str:
     return ' '.join(cleaned_lines_list)
 
 
+# BOLT OPTIMIZATION:
+# Pre-compiled regular expressions for `_process_subtitle_block` and `_clean_noise_patterns`
+# to avoid regex cache lookup overhead during intensive parsing loops.
+_HTML_TAGS_PATTERN: Pattern = re.compile(r'<[^>]*>')
+_NOISE_PATTERN: Pattern = re.compile(r'\[(?:Pulo de tempo|Intervalo|Gap|Pulo):?.*?\]', flags=re.IGNORECASE)
+_MULTIPLE_NEWLINES_PATTERN: Pattern = re.compile(r'\n{3,}')
+
+
 def _process_subtitle_block(raw_text_str: str, subtitle_blocks_list: List[List[str]]) -> None:
     """
     Limpa tags HTML (como <b> ou <font>) e decide se o texto é novo ou repetido.
@@ -122,7 +130,7 @@ def _process_subtitle_block(raw_text_str: str, subtitle_blocks_list: List[List[s
     Esta função garante que guardamos apenas a parte inédita de cada bloco.
     """
     # Remove qualquer tag entre < > (como <font color="white">) usando Regex simples
-    clean_text_str: str = re.sub(r'<[^>]*>', '', raw_text_str)
+    clean_text_str: str = _HTML_TAGS_PATTERN.sub('', raw_text_str)
     
     # Divide o texto em linhas e remove espaços inúteis nas pontas.
     # Usamos list comprehension para ser mais pythônico e performático.
@@ -402,10 +410,9 @@ def _get_md_header_block(text_str: str, level: int = 1) -> Optional[str]:
 def _clean_noise_patterns(text_str: str) -> str:
     """Remove padrões de ruído como [Pulo de tempo] e excesso de quebras de linha."""
     # Remove [Pulo de tempo], [Intervalo], etc.
-    noise_pattern_obj: Pattern = re.compile(r'\[(?:Pulo de tempo|Intervalo|Gap|Pulo):?.*?\]', flags=re.IGNORECASE)
-    cleaned_str: str = noise_pattern_obj.sub('', text_str)
+    cleaned_str: str = _NOISE_PATTERN.sub('', text_str)
     # Normaliza quebras de linha múltiplas
-    return re.sub(r'\n{3,}', '\n\n', cleaned_str).strip()
+    return _MULTIPLE_NEWLINES_PATTERN.sub('\n\n', cleaned_str).strip()
 
 
 def _format_lexis_block(text_str: str, filename_str: str, metadata_dict: Dict[str, str]) -> str:

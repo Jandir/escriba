@@ -530,6 +530,13 @@ def _seg_keywords(seg_wins_list: list, tfidf_vec_obj, tfidf_mat_obj, win_indices
         if len(keywords_list) >= top_n_int: break
     return " · ".join(keywords_list) if keywords_list else ""
 
+# BOLT OPTIMIZATION:
+# Pre-compiled regular expressions for `_flush_paragraph`, `create_adaptive_windows`
+# and `_process_sub_into_para` to avoid cache lookup overhead in MD generation loops.
+_CAPITALIZATION_PATTERN = re.compile(r'(^|[.!?]\s+)(\w)')
+_HTML_TAGS_PATTERN = re.compile(r'<[^>]+>')
+_SENTENCE_END_PATTERN = re.compile(r'[.!?]["\']?\s*$')
+
 def create_adaptive_windows(subs_list, window_size_s_int: int) -> tuple[list[dict], dict]:
     """Agrupa legendas em janelas adaptativas. Retorna (windows, clean_texts)."""
     windows_list: list[dict] = []
@@ -538,7 +545,7 @@ def create_adaptive_windows(subs_list, window_size_s_int: int) -> tuple[list[dic
     start_time_obj = subs_list[0].start
     prev_sub_text_str: str = ""
     for sub_obj in subs_list:
-        raw_text_str: str = re.sub(r"<[^>]+>", "", sub_obj.text.replace('\n', ' ')).strip()
+        raw_text_str: str = _HTML_TAGS_PATTERN.sub("", sub_obj.text.replace('\n', ' ')).strip()
         clean_text_str: str = _strip_rollup(raw_text_str, prev_sub_text_str)
         if clean_text_str:
             prev_sub_text_str = raw_text_str
@@ -669,7 +676,7 @@ def _flush_paragraph(lines: list[str], para_ts: str, out: list[str]) -> None:
         return
     text = " ".join(" ".join(lines).split())
     if text:
-        text = re.sub(r'(^|[.!?]\s+)(\w)', lambda m: m.group(0)[:-1] + m.group(0)[-1].upper(), text)
+        text = _CAPITALIZATION_PATTERN.sub(lambda m: m.group(0)[:-1] + m.group(0)[-1].upper(), text)
         out.append(f"[{para_ts}] {clean_ekklezia_terms(text)}\n\n")
 
 def _init_md_processing(srt_path: Path, indentation_prefix: str) -> tuple | None:
@@ -713,15 +720,15 @@ def _setup_vectorizer(srt_path_name: str, windows: list[dict]):
     return vectorizer, tfidf_matrix, lang_code_str, oral_stopwords
 
 
-def _process_sub_into_para(sub, para_start_time, para_lines_list, md_lines, sentence_end_re, clean_texts=None):
+def _process_sub_into_para(sub, para_start_time, para_lines_list, md_lines, clean_texts=None):
     """Processa uma única legenda dentro de um parágrafo."""
-    sub_text_str = (clean_texts or {}).get(id(sub)) or re.sub(r"<[^>]+>", "", sub.text.replace('\n', ' ')).strip()
+    sub_text_str = (clean_texts or {}).get(id(sub)) or _HTML_TAGS_PATTERN.sub("", sub.text.replace('\n', ' ')).strip()
     sub_text_str = " ".join(sub_text_str.split())
     if not sub_text_str: return para_start_time, para_lines_list
     if para_start_time is None: para_start_time = sub.start
     para_lines_list.append(sub_text_str)
     elapsed_int = (sub.end - para_start_time).seconds
-    if (elapsed_int >= 60 and sentence_end_re.search(sub_text_str)) or elapsed_int >= 120:
+    if (elapsed_int >= 60 and _SENTENCE_END_PATTERN.search(sub_text_str)) or elapsed_int >= 120:
         _flush_paragraph(_dedup_lines(para_lines_list), _smart_ts(para_start_time), md_lines)
         return None, []
     return para_start_time, para_lines_list
@@ -729,14 +736,13 @@ def _process_sub_into_para(sub, para_start_time, para_lines_list, md_lines, sent
 
 def _generate_transcription_structured(segments: list, topic_labels: list[str], md_lines: list[str], clean_texts: dict | None = None):
     """Gera a transcrição estruturada por tópicos."""
-    sentence_end_re = re.compile(r'[.!?]["\']?\s*$')
     for (ts_str, _, seg_wins_list), label_str in zip(segments, topic_labels):
         md_lines.append(f"#### [{ts_str}] - Tópico: {label_str}\n")
         para_lines_list, para_start_time = [], None
         for window_dict in seg_wins_list:
             for sub_obj in window_dict['subs']:
                 para_start_time, para_lines_list = _process_sub_into_para(
-                    sub_obj, para_start_time, para_lines_list, md_lines, sentence_end_re, clean_texts
+                    sub_obj, para_start_time, para_lines_list, md_lines, clean_texts
                 )
         if para_lines_list:
             _flush_paragraph(_dedup_lines(para_lines_list), _smart_ts(para_start_time), md_lines)
