@@ -7,3 +7,7 @@
 ## 2026-07-09 - Avoid redundant file system calls
 **Learning:** Codebase performance pattern: Avoid redundant file system calls (like double `stat()` calls) when traversing directories. For example, instead of checking `if path.exists(): mtime = path.stat().st_mtime`, this results in two filesystem calls. The first call `exists()` does a `stat()` under the hood, and the second `stat()` call does it again. Using a `try: mtime = path.stat().st_mtime except OSError: mtime = 0.0` block reduces syscall overhead by half.
 **Action:** When accessing file metadata in loops or comprehensions, use `try...except OSError` blocks around `path.stat()` instead of checking `path.exists()` first.
+
+## 2026-07-28 - Pre-compile Regex Globally in Hot Paths
+**Learning:** Using `re.sub(pattern, ...)` or `re.compile(pattern)` inline within frequently called functions adds measurable overhead because Python has to perform an internal cache lookup on the regex pattern every time. Pre-compiling the regex object globally removes this overhead and makes parsing loops significantly faster.
+**Action:** When implementing text parsing functions that are called repeatedly (e.g., in tight loops), always pre-compile regular expressions globally.
