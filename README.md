@@ -32,6 +32,27 @@ O output final é uma base de conhecimento limpa e otimizada, pronta para:
 *   **Economia de Tempo Real**: Ele mapeia canais inteiros em minutos e baixa apenas o que é novo, garantindo que sua biblioteca esteja sempre atualizada sem esforço.
 *   **Conteúdo Pronto para Estudar**: Esqueça textos bagunçados. Você recebe documentos organizados por assunto, fáceis de ler e perfeitos para usar em ferramentas como o NotebookLM.
 *   **Biblioteca de Conhecimento Offline**: Uma ferramenta essencial para pesquisadores e estudantes que precisam organizar grandes volumes de informação e ter tudo acessível para consulta rápida, mesmo sem internet.
+*   **Fidelidade Semântica e Rastreabilidade**: Cada bloco de texto gerado possui âncoras temporais (timestamps) apontando diretamente para o trecho exato no vídeo original, permitindo validação rápida (fact-checking).
+
+---
+
+## ⏳ Economia de Tempo & ROI (Retorno sobre Investimento)
+
+Mapear e catalogar conteúdo de vídeo manualmente é um gargalo operacional. O Escriba automatiza mais de 98% desse processo, convertendo dados brutos em conhecimento estruturado em segundos.
+
+### Fluxo de Trabalho Manual vs. Pipeline Escriba (por Hora de Vídeo)
+
+| Etapa do Processo | Tempo Manual Estimado | Tempo com Escriba | Descrição da Automação |
+| :--- | :--- | :--- | :--- |
+| **1. Extração/Download** | 10 a 15 min | **< 30 seg** | Download em lote de metadados e legendas de canais ou vídeos usando `yt-dlp`. |
+| **2. Higienização de Texto** | 60 a 120 min | **Instantâneo** | Limpeza automática de ruídos verbais (*"né"*, *"tipo"*), correção ortográfica via `rules.txt` e deduplicação de roll-ups. |
+| **3. Quebra Semântica (Tópicos)**| 30 a 45 min | **< 10 seg** | Análise matemática do texto (TF-IDF + Similaridade de Cosseno) para detectar quebras de assunto reais e inserir timestamps. |
+| **4. Estruturação e Formatação** | 15 min | **Instantâneo** | Geração de cabeçalhos Markdown, tags YAML e organização dos arquivos na pasta de destino. |
+| **5. Consolidação de Volumes** | 10 min | **Instantâneo** | Agrupamento cronológico (Lexis) e geração de índices integrados para NotebookLM. |
+| **TOTAL** | **~2 a 3.5 horas** | **~1 a 2 minutos** | **Ganho de produtividade superior a 98% por vídeo.** |
+
+> [!TIP]
+> Para um canal médio com 50 vídeos de 1 hora, o Escriba economiza entre **100 e 175 horas de trabalho qualificado**, eliminando tarefas repetitivas e liberando a equipe para focar na análise e aplicação do conhecimento.
 
 ---
 
@@ -41,8 +62,8 @@ O output final é uma base de conhecimento limpa e otimizada, pronta para:
 *   **🛠️ Auto-Healing de Autenticação**: Detecta cookies inválidos, regenera o cache e continua o download sem interrupções.
 *   **🧠 Motor de NLP Avançado**: Pipeline de 6 fases para limpeza de ruído, deduplicação de "muletas" orais e ancoragem temporal.
 *   **📁 Repositório Único Inteligente**: Banco de dados JSON amarrado ao nome da pasta (`escriba_[folder_name].json`), com migração e consolidação automática de bases legadas.
-*   **🎙️ Fallback de Áudio**: Se o vídeo não possui legendas, o Escriba extrai o áudio bruto (`.mp3`/`.m4a`) para processamento externo.
-*   **📚 Consolidação Inteligente (Lexis)**: Agrupamento automático em volumes de ~1.8MB com índices cronológicos e metadados enriquecidos para o NotebookLM.
+*   **🎙️ Fallback de Áudio**: Se o vídeo não possui legendas, o Escriba extrai o áudio bruto (`.mp3`/`.m4a`) para processamento externo (ex: transcrição local/nuvem).
+*   **📚 Consolidação Inteligente (Lexis)**: Agrupamento automático em volumes de ~1.8MB com índices cronológicos e metadados enriquecidos para otimizar o limite de arquivos do NotebookLM.
 
 ---
 
@@ -177,17 +198,31 @@ escriba @CanalExemplo --consolidar
 
 ---
 
-## 🧬 Escriba Scientific: O Motor de NLP
+## 🧬 Escriba Scientific: O Motor de NLP & Qualidade de Dados
 
-O Escriba implementa um pipeline proprietário de **Engenharia de Tópicos** para garantir que a transcrição seja legível por humanos e útil para LLMs.
+O Escriba implementa um pipeline proprietário de **Engenharia de Tópicos** para garantir que a transcrição seja legível por humanos, altamente contextualizada para sistemas RAG e livre de ruídos de dados públicos brutos.
 
-### O Pipeline de Processamento
-1.  **Janelas Adaptativas**: O tamanho da análise varia conforme a duração do vídeo.
-2.  **Vetorização TF-IDF**: Cada janela é convertida em um vetor de importância léxica.
-3.  **Cosine Similarity**: Detecta vales de similaridade para identificar quebras de tópico.
-4.  **Deduplicação Dinâmica**: Remove o comportamento de "roll-up" das legendas automáticas.
-5.  **Dicionário de Marcadores Orais**: Filtra ruídos como "né", "tipo", "basically".
-6.  **Sanitização Estrutural**: Limpeza automática de artefatos HTML.
+```mermaid
+graph TD
+    A[Dados Brutos de Vídeo] --> B(Pipeline de NLP)
+    B --> C[1. Janelas Adaptativas e Similaridade de Cosseno]
+    B --> D[2. Dicionário Dinâmico rules.txt]
+    B --> E[3. Deduplicação Atômica de Roll-ups]
+    B --> F[4. Preservação de Proveniência e Âncoras Temporais]
+    C --> G[Markdown Estruturado pronto para IA / RAG / NotebookLM]
+    D --> G
+    E --> G
+    F --> G
+```
+
+### O Pipeline de Processamento de Alta Qualidade:
+
+1.  **Janelas Adaptativas & Similaridade de Cosseno**: O tamanho da análise varia conforme a duração do vídeo. O algoritmo detecta vales de similaridade (via TF-IDF + similaridade de cosseno) para identificar quebras de assunto naturais. Isso garante que a quebra de tópicos em Markdown ocorra onde a discussão realmente mudou de direção, em vez de cortes por tempo ou palavras fixas.
+2.  **Dicionário Dinâmico de Termos (`rules.txt`)**: Corrige falhas fonéticas comuns de legendagem em tempo real sobre nomes próprios, siglas e termos técnicos. Permite substituições customizadas no escopo local ou global do projeto.
+3.  **Deduplicação de Roll-ups**: Remove automaticamente a duplicação persistente de texto comum em legendas sincronizadas, reduzindo desperdício de tokens nas IAs e melhorando consideravelmente a leitura humana.
+4.  **Dicionário de Marcadores Orais**: Filtra ruídos recorrentes de fala informal como *"né"*, *"tipo"*, *"basically"*, *"sabe?"*, tornando a transcrição limpa.
+5.  **Sanitização Estrutural**: Limpeza automática de tags e artefatos de arquivos HTML/SRT brutos.
+6.  **Proveniência de Timestamps**: Mantém links com âncoras temporais ao longo do documento Markdown, permitindo auditorias rápidas (fact-checking) diretamente no vídeo original no YouTube ou Vimeo.
 
 ---
 
