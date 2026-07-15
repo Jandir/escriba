@@ -612,7 +612,7 @@ def yaml_safe(template) -> str:
         res.append(prefix)
         val = str(interp.value)
         if prefix.endswith('"') and template.strings[i+1].startswith('"'):
-            val = val.replace('"', '\\"')
+            val = val.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
         res.append(val)
     res.append(template.strings[-1])
     return "".join(res)
