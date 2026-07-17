@@ -612,7 +612,12 @@ def yaml_safe(template) -> str:
         res.append(prefix)
         val = str(interp.value)
         if prefix.endswith('"') and template.strings[i+1].startswith('"'):
+            # Security Fix: Prevent YAML injection by escaping backslashes, newlines, and carriage returns
+            # Replace backslashes first to avoid double-escaping later replacements
+            val = val.replace('\\', '\\\\')
             val = val.replace('"', '\\"')
+            val = val.replace('\n', '\\n')
+            val = val.replace('\r', '\\r')
         res.append(val)
     res.append(template.strings[-1])
     return "".join(res)
