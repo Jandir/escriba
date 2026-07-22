@@ -612,7 +612,12 @@ def yaml_safe(template) -> str:
         res.append(prefix)
         val = str(interp.value)
         if prefix.endswith('"') and template.strings[i+1].startswith('"'):
+            # SECURITY: Escaping only double quotes leaves the application vulnerable to YAML injection.
+            # We must escape backslashes first to avoid double-escaping, followed by quotes and newlines/carriage returns.
+            val = val.replace('\\', '\\\\')
             val = val.replace('"', '\\"')
+            val = val.replace('\n', '\\n')
+            val = val.replace('\r', '\\r')
         res.append(val)
     res.append(template.strings[-1])
     return "".join(res)
