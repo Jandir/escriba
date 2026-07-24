@@ -304,6 +304,11 @@ def test_yaml_safe():
     tmpl = t'title: "{titulo}"'
     assert escriba.yaml_safe(tmpl) == 'title: "O \\"Novo\\" Vídeo"'
 
+    # Barras invertidas, novas linhas e retorno de carro -> devem ser escapados para evitar injeção YAML
+    titulo_injetado = 'Hack\nNovo\rLinha\\Aspas"'
+    tmpl_inj = t'title: "{titulo_injetado}"'
+    assert escriba.yaml_safe(tmpl_inj) == 'title: "Hack\\nNovo\\rLinha\\\\Aspas\\""'
+
     # Aspas em campo sem aspas no template -> não devem ser escapadas
     tmpl_raw = t'# {titulo}'
     assert escriba.yaml_safe(tmpl_raw) == '# O "Novo" Vídeo'
