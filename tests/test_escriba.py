@@ -309,6 +309,15 @@ def test_yaml_safe():
     assert escriba.yaml_safe(tmpl_raw) == '# O "Novo" Vídeo'
 
 
+def test_yaml_safe_injection_prevention():
+    """Valida se a tag yaml_safe (PEP 750) escapa corretamente caracteres de injeção YAML."""
+    # SECURITY (Sentinel): Tests prevention of YAML injection
+    # Escapes backslashes, double quotes, newlines, and carriage returns
+    payload = 'Innocent title"\\nmalicious_key: "value'
+    tmpl = t'title: "{payload}"'
+    assert escriba.yaml_safe(tmpl) == 'title: "Innocent title\\"\\\\nmalicious_key: \\"value"'
+
+
 def test_generate_md_header_with_quotes():
     """Valida se generate_md_header formata corretamente o cabeçalho YAML escapando aspas no título."""
     header = escriba.generate_md_header(
