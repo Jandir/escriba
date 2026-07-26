@@ -604,7 +604,8 @@ def get_provider(url: str) -> str:
 def yaml_safe(template) -> str:
     """
     Função de Tag (PEP 750) para renderizar cabeçalhos YAML com segurança.
-    Escapa aspas duplas internas de valores que estão entre aspas duplas no template.
+    Escapa aspas duplas internas, contrabarras e quebras de linha de valores
+    que estão entre aspas duplas no template para evitar injeção de YAML.
     """
     res = []
     for i, interp in enumerate(template.interpolations):
@@ -612,6 +613,9 @@ def yaml_safe(template) -> str:
         res.append(prefix)
         val = str(interp.value)
         if prefix.endswith('"') and template.strings[i+1].startswith('"'):
+            val = val.replace('\\', '\\\\')
+            val = val.replace('\n', '\\n')
+            val = val.replace('\r', '\\r')
             val = val.replace('"', '\\"')
         res.append(val)
     res.append(template.strings[-1])
