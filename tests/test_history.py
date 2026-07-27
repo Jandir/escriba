@@ -33,6 +33,7 @@ from history import (
     _parse_video_metadata_json,
     _read_legacy_id_file,
     _read_legacy_nosub_file,
+    _deduplicate_channel_list,
 )
 
 
@@ -435,6 +436,43 @@ class TestRegisterChannelInJson:
         assert is_new is True
         assert registered is True
         assert json_path.exists()
+
+    def test_deduplicate_channel_list_helper(self):
+        """Testa o comportamento da função auxiliar de deduplicação."""
+        input_list = ["@actionchurchoficial", "@actionchurchoficial", "https://www.youtube.com/@actionchurchoficial", "@outrocanal"]
+        expected = ["@actionchurchoficial", "@outrocanal"]
+        assert _deduplicate_channel_list(input_list) == expected
+
+    def test_deduplicacao_na_gravacao_com_duplicados_existentes(self, tmp_path):
+        """Garante que save_channel_state_json remova duplicados existentes da lista de canais."""
+        json_path = tmp_path / "escriba_dup.json"
+        json_path.write_text(json.dumps({
+            "youtube_channels": ["@actionchurchoficial", "@actionchurchoficial", "https://www.youtube.com/@actionchurchoficial"],
+            "videos": []
+        }), encoding="utf-8")
+
+        # Chama save_channel_state_json, que deve acionar a deduplicação
+        save_channel_state_json(json_path, [], youtube_channel_url_str="https://youtube.com/@actionchurchoficial")
+
+        data = json.loads(json_path.read_text(encoding='utf-8'))
+        assert "youtube_channels" in data
+        assert data["youtube_channels"] == ["@actionchurchoficial"]
+
+    def test_deduplicacao_no_registro_de_canal(self, tmp_path):
+        """Garante que register_channel_in_json não adicione duplicados, mesmo em formatos diferentes."""
+        json_path = tmp_path / "escriba_dup_reg.json"
+        json_path.write_text(json.dumps({
+            "youtube_channels": ["@actionchurchoficial"],
+            "videos": []
+        }), encoding="utf-8")
+
+        # Tenta registrar o mesmo canal via URL completa
+        is_new, registered = register_channel_in_json(json_path, "https://www.youtube.com/@actionchurchoficial")
+
+        assert is_new is False
+        data = json.loads(json_path.read_text(encoding='utf-8'))
+        assert data["youtube_channels"] == ["@actionchurchoficial"]
+
 
 
 # ─── Integração: register + save não perde canais ─────────────────────────────

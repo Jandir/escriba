@@ -274,8 +274,11 @@ def generate_fast_list_json(
         urls_to_try = [f"{base_url}/videos", f"{base_url}/streams", f"{base_url}/shorts"]
     
     videos_found_list: List[Dict[str, Any]] = []
+    stop_reached = False
     
     for current_url in urls_to_try:
+        if stop_reached:
+            break
         consecutive_known_count = 0
         MAX_CONSECUTIVE_KNOWN = 10  # Margem de tolerância para ignorar vídeos fixados (pinned) no topo
         
@@ -306,6 +309,7 @@ def generate_fast_list_json(
                             if consecutive_known_count >= MAX_CONSECUTIVE_KNOWN:
                                 # Matamos o processo filho para interromper a listagem de vídeos antigos
                                 process_obj.terminate()
+                                stop_reached = True
                                 break
                         else:
                             consecutive_known_count = 0

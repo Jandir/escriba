@@ -386,11 +386,11 @@ def _populate_output_metadata(
     url_str: Optional[str]
 ) -> None:
     """Preenche metadados de controle do canal no dicionário final de salvamento, preservando listas de canais."""
-    # Preservar listas de canais para YouTube e Vimeo salvos de execuções anteriores
+    # Preservar listas de canais para YouTube e Vimeo salvos de execuções anteriores, deduplicando-os
     for key_str in ["youtube_channels", "vimeo_channels"]:
         existing_list = existing_dict.get(key_str, [])
         if isinstance(existing_list, list) and existing_list:
-            output_data_dict[key_str] = existing_list
+            output_data_dict[key_str] = _deduplicate_channel_list(existing_list)
         else:
             output_data_dict[key_str] = []
             
@@ -425,6 +425,9 @@ def _populate_output_metadata(
             final_url = _normalize_handle(url_str) if provider_str == "youtube" else url_str
             if not _is_handle_registered(final_url, channels_list):
                 channels_list.append(final_url)
+                
+        # Deduplica final para garantir unicidade e limpeza de duplicatas geradas
+        output_data_dict[channels_key_str] = _deduplicate_channel_list(channels_list)
 
 
 def _merge_duplicate_inline(existing_dict: Dict[str, Any], new_dict: Dict[str, Any]) -> None:
@@ -744,6 +747,41 @@ def _cleanup_legacy_migration_file(json_path: Path, is_legacy_name_bool: bool) -
         json_path.unlink()
 
 
+def _deduplicate_channel_list(channels_list: List[str]) -> List[str]:
+    """
+    Remove duplicatas de canais (incluindo variações de URL e handle para o mesmo canal).
+    Mantém a ordem original, preferindo a forma de handle (@canal) se houver duplicação com a URL.
+    """
+    seen_clean = set()
+    unique_items = []
+    
+    # Primeiro, criamos um mapeamento do clean_handle para o melhor formato disponível.
+    # Preferimos o formato com '@' se disponível.
+    best_format = {}
+    for item in channels_list:
+        clean = _extract_handle_clean(item)
+        if not clean:
+            continue
+        existing = best_format.get(clean)
+        if not existing:
+            best_format[clean] = item
+        else:
+            # Se o item atual começa com @, ele é melhor que um formato de URL ou sem @
+            if item.startswith("@"):
+                best_format[clean] = item
+                
+    # Reconstrói a lista preservando a ordem da primeira aparição de cada canal único
+    for item in channels_list:
+        clean = _extract_handle_clean(item)
+        if not clean:
+            continue
+        if clean not in seen_clean:
+            seen_clean.add(clean)
+            unique_items.append(best_format[clean])
+            
+    return unique_items
+
+
 def register_channel_in_json(json_path: Path, handle_str: str, provider_str: str = "youtube") -> Tuple[bool, bool]:
     """
     Registra dinamicamente um handle de canal na lista de metadados do JSON se ainda não estiver cadastrado.
@@ -764,6 +802,7 @@ def register_channel_in_json(json_path: Path, handle_str: str, provider_str: str
     if not isinstance(channels_list, list): 
         channels_list = []
         
+    channels_list = _deduplicate_channel_list(channels_list)
     modified = False
     
     # Garante que o canal original/contexto esteja presente na lista de canais
@@ -780,8 +819,9 @@ def register_channel_in_json(json_path: Path, handle_str: str, provider_str: str
         channels_list.append(final_handle)
         modified = True
         
-    if modified:
-        data_dict[channels_key_str] = channels_list
+    deduped_list = _deduplicate_channel_list(channels_list)
+    if len(deduped_list) != len(channels_list) or modified:
+        data_dict[channels_key_str] = deduped_list
         success_bool = _atomic_json_dump(json_path, data_dict)
         return is_new, success_bool
         
@@ -795,10 +835,19 @@ def _normalize_handle(handle_str: str) -> str:
     return handle_str
 
 
+def _extract_handle_clean(s: str) -> str:
+    """Retorna a parte limpa do handle (ex: 'jordanbpeterson') para comparação, mesmo se for URL."""
+    if "/@" in s:
+        match = re.search(r"/(@[A-Za-z0-9_\-\.]+)", s)
+        if match:
+            return match.group(1).lstrip("@").lower()
+    return s.lstrip("@").lower()
+
+
 def _is_handle_registered(handle_str: str, channels_list: List[str]) -> bool:
     """Checa se o canal já foi cadastrado na lista (fazendo comparação case-insensitive)."""
-    target_str: str = handle_str.lstrip("@").lower()
-    return any(c_str.lstrip("@").lower() == target_str for c_str in channels_list)
+    target_str: str = _extract_handle_clean(handle_str)
+    return any(_extract_handle_clean(c_str) == target_str for c_str in channels_list)
 
 
 def _atomic_json_dump(json_path: Path, data_dict: Dict[str, Any]) -> bool:

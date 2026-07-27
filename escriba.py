@@ -394,13 +394,18 @@ def load_or_create_channel_state(
     if not yt_list and not state_dict: return None, [], lang_cached_str, 0
 
     tag_str = f"@{name_str}" if name_str and name_str != "canal" else url_str
-    _perform_state_sync(state_dict, yt_list, ident_str, tag_str, chan_id_str, up_id_str, name_str, cwd_path, url_str)
+    _perform_state_sync(state_dict, yt_list, ident_str, tag_str, chan_id_str, up_id_str, name_str, cwd_path, url_str, history_dict=hist_dict)
     return json_path, list(state_dict.values()), lang_cached_str, len(state_dict)
 
 
-def _perform_state_sync(state_dict: dict, yt_list: list, ident_str: str, tag_str: str, chan_id_str: str, up_id_str: str, name_str: str, cwd_path: Path, url_str: str):
+def _perform_state_sync(
+    state_dict: dict, yt_list: list, ident_str: str, tag_str: str, 
+    chan_id_str: str, up_id_str: str, name_str: str, cwd_path: Path, 
+    url_str: str, history_dict: dict | None = None
+):
     """Auxiliar para sincronizar e limpar o estado durante o carregamento."""
-    history_dict = load_all_local_history(cwd_path)
+    if history_dict is None:
+        history_dict = load_all_local_history(cwd_path)
     new_v_int, imp_v_int = sync_video_records(
         state_dict, yt_list, history_dict, (ident_str if "list=" in url_str else None), 
         tag_str, chan_id_str, up_id_str, name_str
@@ -1388,10 +1393,13 @@ def _ensure_global_cookies(session_config: SessionConfig, cli_args_ns: argparse.
 
 def _detect_and_report_language(session_config: SessionConfig, cookies_list: list, user_lang_str: str) -> str:
     """Detecta o idioma e imprime feedback se definido pelo usuário."""
-    _, _, cached_lang_str, _ = load_or_create_channel_state(
-        session_config.cwd_path, session_config.yt_dlp_cmd_list, cookies_list, session_config.channel_url,
-        only_peek_lang_bool=True
-    )
+    json_path = get_latest_json_path(session_config.cwd_path)
+    cached_lang_str = _read_persisted_lang(json_path) if json_path.exists() else None
+    if not cached_lang_str:
+        _, _, cached_lang_str, _ = load_or_create_channel_state(
+            session_config.cwd_path, session_config.yt_dlp_cmd_list, cookies_list, session_config.channel_url,
+            only_peek_lang_bool=True
+        )
     provider_mod = _get_provider_module(session_config.channel_url)
     lang_str = user_lang_str or provider_mod.detect_language(
         session_config.yt_dlp_cmd_list, cookies_list, session_config.channel_url, cached_lang_str
@@ -1608,15 +1616,13 @@ def process_videos(
         # stat() adicional. Regex pré-compilado fora do loop evita recompilação.
         if conf_obj.disk_files_cache is None:
             from collections import defaultdict
-            prefix    = f"{conf_obj.channel_dir_name}-"
-            prefix_re = re.compile(fr"^{re.escape(prefix)}([A-Za-z0-9_-]{{11}}|\d+)")
             cache: defaultdict[str, list[str]] = defaultdict(list)
             with os.scandir(conf_obj.cwd_path) as entries:
                 for entry in entries:
-                    if entry.is_file(follow_symlinks=False) and entry.name.startswith(prefix):
-                        m = prefix_re.match(entry.name)
-                        if m:
-                            cache[m.group(1)].append(entry.name)
+                    if entry.is_file(follow_symlinks=False):
+                        vid_id = extract_video_id(entry.name)
+                        if vid_id != "Sem ID":
+                            cache[vid_id].append(entry.name)
             conf_obj.disk_files_cache = dict(cache)
 
         sys._escriba_full_scan = cli_args_ns.full_scan

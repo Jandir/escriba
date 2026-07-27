@@ -126,6 +126,17 @@ python3 escriba.py @Canal
 > [!TIP]
 > **Auto-Venv**: O script possui lógica interna para se re-executar no ambiente virtual local se detectado!
 
+### 🍪 Autenticação & Cookies (Opcional - Recomendado para Chrome)
+
+Se você utiliza o **Google Chrome** (ou outros navegadores Chromium) e costuma rodar o Escriba com a flag `--browser chrome` ou utilizar a extração de cookies automática, o Windows/Chrome pode bloquear o arquivo de cookies quando o navegador estiver aberto, gerando erros de cópia (`Could not copy Chrome cookie database`).
+
+Para contornar esse bloqueio de forma automatizada e permitir a extração mesmo com o navegador aberto:
+1. Baixe o repositório do plugin [yt-dlp-ChromeCookieUnlock](https://github.com/seproDev/yt-dlp-ChromeCookieUnlock).
+2. Extraia ou coloque a pasta do plugin no diretório de plugins global do `yt-dlp`:
+   * **Windows**: `%APPDATA%/yt-dlp/plugins/yt-dlp-ChromeCookieUnlock/`
+   * **macOS/Linux**: `~/.config/yt-dlp/plugins/yt-dlp-ChromeCookieUnlock/`
+3. O `yt-dlp` detectará e usará o plugin automaticamente ao rodar sob o Escriba.
+
 ### 🧪 Testes Unitários
 Para garantir a integridade das regras de limpeza e do banco de dados:
 ```bash
