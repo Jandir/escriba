@@ -49,6 +49,11 @@ from datetime import datetime
 from typing import List, Dict, Tuple, Optional, Set, Pattern, Any
 from utils import print_ok, print_err, print_warn, print_info, print_section, extract_video_id, format_date, BOLD, RESET, DIM
 
+# BOLT OPTIMIZATION:
+# Global pre-compiled regular expressions for repeated parsing.
+_NOISE_PATTERN = re.compile(r'\[(?:Pulo de tempo|Intervalo|Gap|Pulo):?.*?\]', flags=re.IGNORECASE)
+_NEWLINE_PATTERN = re.compile(r'\n{3,}')
+
 # Nome da pasta onde guardamos os arquivos originais após o processamento.
 # Isso mantém a pasta principal limpa e organizada.
 ARCHIVE_DIR_NAME: str = "archive" 
@@ -401,11 +406,10 @@ def _get_md_header_block(text_str: str, level: int = 1) -> Optional[str]:
 
 def _clean_noise_patterns(text_str: str) -> str:
     """Remove padrões de ruído como [Pulo de tempo] e excesso de quebras de linha."""
-    # Remove [Pulo de tempo], [Intervalo], etc.
-    noise_pattern_obj: Pattern = re.compile(r'\[(?:Pulo de tempo|Intervalo|Gap|Pulo):?.*?\]', flags=re.IGNORECASE)
-    cleaned_str: str = noise_pattern_obj.sub('', text_str)
-    # Normaliza quebras de linha múltiplas
-    return re.sub(r'\n{3,}', '\n\n', cleaned_str).strip()
+    # BOLT OPTIMIZATION:
+    # Usando expressões regulares pré-compiladas globalmente para evitar overhead.
+    cleaned_str: str = _NOISE_PATTERN.sub('', text_str)
+    return _NEWLINE_PATTERN.sub('\n\n', cleaned_str).strip()
 
 
 def _format_lexis_block(text_str: str, filename_str: str, metadata_dict: Dict[str, str]) -> str:
