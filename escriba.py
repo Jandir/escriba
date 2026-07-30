@@ -683,10 +683,16 @@ def _flush_paragraph(lines: list[str], para_ts: str, out: list[str]) -> None:
 
 def _init_md_processing(srt_path: Path, indentation_prefix: str) -> tuple | None:
     """Carrega dependências e abre o arquivo SRT com validação."""
-    if not srt_path.exists():
+    # BOLT OPTIMIZATION:
+    # Use try/except with `stat()` to avoid double syscall (exists() calls stat() under the hood).
+    # This reduces filesystem I/O operations by 50% when checking file metadata.
+    try:
+        stat_info = srt_path.stat()
+    except OSError:
         print_warn(f"Arquivo SRT não encontrado: {srt_path.name}", indentation_prefix)
         return None
-    if srt_path.stat().st_size == 0:
+
+    if stat_info.st_size == 0:
         print_warn(f"Arquivo SRT vazio: {srt_path.name}", indentation_prefix)
         return None
     deps = _load_ml_deps()
