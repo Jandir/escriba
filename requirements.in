@@ -1,5 +1,5 @@
 python-dotenv
 requests
 yt-dlp
-urllib3<2.5
+urllib3>=2.4.0
 chardet<6.0.0
