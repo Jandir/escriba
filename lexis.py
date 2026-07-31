@@ -53,6 +53,9 @@ from utils import print_ok, print_err, print_warn, print_info, print_section, ex
 # Global pre-compiled regular expressions for repeated parsing.
 _NOISE_PATTERN = re.compile(r'\[(?:Pulo de tempo|Intervalo|Gap|Pulo):?.*?\]', flags=re.IGNORECASE)
 _NEWLINE_PATTERN = re.compile(r'\n{3,}')
+_HTML_TAG_PATTERN = re.compile(r'<[^>]*>')
+_MD_FORMAT_PATTERN = re.compile(r'[\*\_]')
+_YAML_STRIP_PATTERN = re.compile(r"^---\n.*?\n---\n?", flags=re.DOTALL)
 
 # Nome da pasta onde guardamos os arquivos originais após o processamento.
 # Isso mantém a pasta principal limpa e organizada.
@@ -127,7 +130,7 @@ def _process_subtitle_block(raw_text_str: str, subtitle_blocks_list: List[List[s
     Esta função garante que guardamos apenas a parte inédita de cada bloco.
     """
     # Remove qualquer tag entre < > (como <font color="white">) usando Regex simples
-    clean_text_str: str = re.sub(r'<[^>]*>', '', raw_text_str)
+    clean_text_str: str = _HTML_TAG_PATTERN.sub('', raw_text_str)
     
     # Divide o texto em linhas e remove espaços inúteis nas pontas.
     # Usamos list comprehension para ser mais pythônico e performático.
@@ -215,7 +218,7 @@ def _extract_metadata_from_content(content_str: str) -> Dict[str, str]:
         if h1_match_obj:
             title_candidate = h1_match_obj.group(1).strip()
             # Limpa possíveis artefatos de markdown no título (como links ou negritos extras)
-            title_candidate = re.sub(r'[\*\_]', '', title_candidate)
+            title_candidate = _MD_FORMAT_PATTERN.sub('', title_candidate)
             if title_candidate:
                 meta_dict["title"] = title_candidate
             
@@ -380,7 +383,7 @@ def _extract_md_transcription(md_content_str: str) -> str:
     content_str: str = md_content_str.strip()
     
     # Remove o bloco de metadados YAML (o frontmatter)
-    yaml_stripped_str: str = re.sub(r"^---\n.*?\n---\n?", "", content_str, count=1, flags=re.DOTALL).strip()
+    yaml_stripped_str: str = _YAML_STRIP_PATTERN.sub("", content_str, count=1).strip()
 
     # Tenta manter o título principal (# Título) se ele existir
     header_block_str: str = _get_md_header_block(yaml_stripped_str) or _get_md_header_block(content_str, level=2) or ""
