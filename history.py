@@ -619,22 +619,24 @@ def _backup_legacy_files(cwd_path: Path) -> None:
     legacy_files_list: List[str] = ["historico.txt", "historico-info.txt", "videos_sem_legenda.txt"]
     for file_name_str in legacy_files_list:
         file_path: Path = cwd_path / file_name_str
-        if file_path.is_file(): 
+        try:
             file_path.rename(file_path.with_suffix(".txt.bak"))
+        except OSError:
+            pass
 
 
 def _read_legacy_id_file(file_path: Path, prefix_str: str) -> set[str]:
     """Lê um arquivo legado de texto e isola a string do ID do vídeo (removendo prefixos de provedor)."""
     ids_set: set = set()
-    if not file_path.is_file(): 
-        return ids_set
-        
-    with open(file_path, "r", encoding="utf-8") as file_descriptor_obj:
-        for raw_line_str in file_descriptor_obj:
-            clean_line_str: str = raw_line_str.strip()
-            if clean_line_str.startswith(prefix_str):
-                # Isola o ID após o espaço do prefixo (ex: "youtube ID_VIDEO" -> "ID_VIDEO")
-                ids_set.add(clean_line_str[len(prefix_str):])
+    try:
+        with open(file_path, "r", encoding="utf-8") as file_descriptor_obj:
+            for raw_line_str in file_descriptor_obj:
+                clean_line_str: str = raw_line_str.strip()
+                if clean_line_str.startswith(prefix_str):
+                    # Isola o ID após o espaço do prefixo (ex: "youtube ID_VIDEO" -> "ID_VIDEO")
+                    ids_set.add(clean_line_str[len(prefix_str):])
+    except OSError:
+        pass
                 
     return ids_set
 
@@ -642,15 +644,15 @@ def _read_legacy_id_file(file_path: Path, prefix_str: str) -> set[str]:
 def _read_legacy_nosub_file(file_path: Path) -> set[str]:
     """Lê o arquivo legado que lista links de vídeos sem legenda e extrai seus IDs de vídeo."""
     ids_set: set = set()
-    if not file_path.is_file(): 
-        return ids_set
-        
-    with open(file_path, "r", encoding="utf-8") as file_descriptor_obj:
-        for raw_line_str in file_descriptor_obj:
-            if "watch?v=" in raw_line_str:
-                video_id_str: str = raw_line_str.strip().split("watch?v=")[-1].strip()
-                if video_id_str: 
-                    ids_set.add(video_id_str)
+    try:
+        with open(file_path, "r", encoding="utf-8") as file_descriptor_obj:
+            for raw_line_str in file_descriptor_obj:
+                if "watch?v=" in raw_line_str:
+                    video_id_str: str = raw_line_str.strip().split("watch?v=")[-1].strip()
+                    if video_id_str:
+                        ids_set.add(video_id_str)
+    except OSError:
+        pass
                     
     return ids_set
 
