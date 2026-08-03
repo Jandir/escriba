@@ -141,34 +141,97 @@ def _get_ekklezia_regex() -> Tuple[Optional[Pattern], Dict[str, str]]:
     return re.compile(regex_pattern_str), lookup_dict
 
 
-def clean_ekklezia_terms(text_str: str) -> str:
+def clean_asr_artifacts(text_str: str) -> str:
     """
-    Aplica todas as regras de substituição de termos cadastrados usando expressão regular otimizada.
-    
-    Explicação para Iniciantes:
-    - Esta é a função pública chamada pelo pipeline de limpeza de texto.
-    - Usamos a função `regex_pattern_obj.sub(_replace_callback, text_str)`.
-      A beleza de passar uma função callback (`_replace_callback`) como primeiro parâmetro do `.sub()` é
-      que, para cada ocorrência encontrada no texto, o Python chama a nossa função passando o objeto `Match`.
-      A nossa função olha no mapa (`lookup_dict`) e devolve o substituto correto de forma dinâmica!
+    Remove artefatos de áudio e marcadores sonoros automáticos ASR (ex: ♪, [Música], [Aplausos]).
     """
     if not text_str:
         return text_str
+    # Remove caracteres de nota musical
+    cleaned = re.sub(r'[♪♫#]', '', text_str)
+    # Remove marcadores entre colchetes típicos de ASR
+    cleaned = re.sub(r'\[(Música|Aplausos|Risos|Música ao fundo|Vinheta|Vinheta de abertura|Legendas pela comunidade)\]', '', cleaned, flags=re.IGNORECASE)
+    # Normaliza múltiplos espaços
+    return " ".join(cleaned.split())
+
+
+def clean_ekklezia_terms(text_str: str) -> str:
+    """
+    Aplica todas as regras de substituição de termos cadastrados e higienização ASR.
+    """
+    if not text_str:
+        return text_str
+
+    text_str = clean_asr_artifacts(text_str)
 
     regex_pattern_obj, lookup_dict = _get_ekklezia_regex()
     if not regex_pattern_obj:
         return text_str
 
     def _replace_callback(match_obj: re.Match) -> str:
-        """
-        Função interna que decide qual termo novo usar com base no casamento (match) obtido.
-        
-        Explicação para Iniciantes:
-        O 'match_obj.group(0)' contém o termo bruto exato que o motor Regex capturou no texto.
-        Usamos esse termo como chave no nosso dicionário de tradução (`lookup_dict`) para retornar
-        o valor substituído correspondente de forma instantânea (tempo constante O(1)).
-        """
         return lookup_dict[match_obj.group(0)]
 
-    # Aplica todas as substituições e retorna o texto higienizado
     return regex_pattern_obj.sub(_replace_callback, text_str)
+
+
+def fix_sentence_capitalization(text_str: str) -> str:
+    """
+    Garante que o início do texto e palavras após pontuações finais (. ! ?) comecem com maiúscula,
+    e converte frases interrogativas terminadas em ponto simples para ponto de interrogação (?).
+    """
+    if not text_str:
+        return text_str
+
+    clean_txt: str = text_str.strip()
+    if not clean_txt:
+        return text_str
+
+    # Capitaliza primeira letra do texto
+    clean_txt = clean_txt[0].upper() + clean_txt[1:]
+
+    # Capitaliza após . ! ? seguidos de espaço
+    def _cap_match(m: re.Match) -> str:
+        return m.group(1) + m.group(2).upper()
+
+    clean_txt = re.sub(r'([.!?]\s+)(\w)', _cap_match, clean_txt)
+
+    # Converte sentenças iniciando com gatilhos de pergunta e terminadas em '.' para '?'
+    question_starters = (
+        "por que", "porque", "como", "onde", "qual", "quais",
+        "quem", "quando", "quanto", "quantos", "quantas", "será que", "será"
+    )
+    
+    def _q_match(m: re.Match) -> str:
+        prefix = m.group(1)
+        sentence = m.group(2)
+        if any(sentence.lower().startswith(q) for q in question_starters):
+            return prefix + sentence + "?"
+        return m.group(0)
+
+    # Substitui em cada sentença do texto
+    clean_txt = re.sub(r'(^|[.!?]\s+)([^.!?]+)\.', _q_match, clean_txt)
+    return clean_txt
+
+
+def restore_punctuation_heuristics(text_str: str, pause_after_seconds: float = 0.0, is_last_segment: bool = False) -> str:
+    """
+    Restaura pontuação gramatical local baseando-se no tempo de pausa entre legendas ASR
+    e em regras sintáticas interrogativas.
+    """
+    if not text_str:
+        return text_str
+
+    clean_txt: str = text_str.strip()
+    if not clean_txt:
+        return text_str
+
+    # Se o texto não termina com pontuação (. ! ? , ; :)
+    if not re.search(r'[.!?\x3a\x3b,]$', clean_txt):
+        if is_last_segment or pause_after_seconds >= 0.4:
+            clean_txt += "."
+        elif pause_after_seconds >= 0.15:
+            clean_txt += ","
+
+    return fix_sentence_capitalization(clean_txt)
+
+

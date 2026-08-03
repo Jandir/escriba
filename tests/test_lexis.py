@@ -90,8 +90,8 @@ def test_format_lexis_block():
     
     formatted_str: str = _format_lexis_block(text_str, filename_str, metadata_dict)
     
-    assert "ARQUIVO: video.md" in formatted_str
-    assert "ID: VID123" in formatted_str
+    assert "file_source: \"video.md\"" in formatted_str
+    assert "video_id: \"VID123\"" in formatted_str
     assert "Título Legal" in formatted_str
     assert "2024-01-01" in formatted_str
 

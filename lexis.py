@@ -58,10 +58,10 @@ _NEWLINE_PATTERN = re.compile(r'\n{3,}')
 # Isso mantém a pasta principal limpa e organizada.
 ARCHIVE_DIR_NAME: str = "archive" 
 
-# Por que 1.8MB? 
-# Arquivos muito grandes podem travar alguns editores ou demorar para carregar em IAs.
-# 1.8MB é um "ponto ideal" (sweet spot) entre densidade de informação e performance.
-MAX_FILE_SIZE_MB: float = 1.8
+# Por que 1.0MB? 
+# 1.0MB (~200k tokens) é o ponto ideal (sweet spot) para o Google NotebookLM e RAG.
+# Garante alta densidade sem causar perda de precisão de busca ("Lost in the Middle").
+MAX_FILE_SIZE_MB: float = 1.0
 MAX_CHARS: int = int(MAX_FILE_SIZE_MB * 1024 * 1024) 
 
 def clean_srt_content(subtitle_content_str: str) -> str:
@@ -413,17 +413,40 @@ def _clean_noise_patterns(text_str: str) -> str:
 
 
 def _format_lexis_block(text_str: str, filename_str: str, metadata_dict: Dict[str, str]) -> str:
-    """Formata o bloco consolidado com separadores e metadados."""
-    border_str: str = "=" * 60
+    """
+    Formata o bloco consolidado encapsulando cada vídeo em tags <article> e Frontmatter YAML,
+    otimizando a delimitação de escopo e a extração de metadados para RAG e Google NotebookLM.
+    """
+    title_str: str = metadata_dict.get('title', 'Sem Título')
+    video_id_str: str = metadata_dict.get('id', '')
+    date_str: str = metadata_dict.get('date', 'Desconhecida')
+    url_str: str = f"https://youtube.com/watch?v={video_id_str}" if len(video_id_str) == 11 else ""
+
+    clean_body_str: str = text_str.strip()
+
+    # Evita duplicar # Título e > Data se o texto processado já contiver o cabeçalho H1
+    header_prefix_lines: List[str] = []
+    if not clean_body_str.startswith("# "):
+        header_prefix_lines = [
+            f"# {title_str}",
+            "",
+            f"> **Data:** {date_str} | **ID:** `{video_id_str}`" + (f" | 🔗 [{url_str}]({url_str})" if url_str else ""),
+            ""
+        ]
+
     lines_list: List[str] = [
-        f"\n{border_str}",
-        f"ARQUIVO: {filename_str}",
-        f"ID: {metadata_dict['id']}",
-        f"DATA: {metadata_dict['date']}",
-        f"TITULO: {metadata_dict['title']}",
-        f"{'-' * 60}",
-        f"{text_str}",
-        f"{border_str}\n"
+        "\n<article class=\"video-entry\">",
+        "---",
+        f"title: \"{title_str}\"",
+        f"video_id: \"{video_id_str}\"",
+        f"url: \"{url_str}\"",
+        f"date: \"{date_str}\"",
+        f"file_source: \"{filename_str}\"",
+        "---",
+        ""
+    ] + header_prefix_lines + [
+        clean_body_str,
+        "</article>\n"
     ]
     return "\n".join(lines_list)
 
@@ -605,14 +628,26 @@ _VOLUME_METADATA_PATTERN = re.compile(
 def extract_metadata_from_volume(volume_content_str: str) -> List[Dict[str, str]]:
     """
     Lê um arquivo de volume já pronto e extrai a lista de vídeos que estão lá.
-    
-    POR QUE ISSO É NECESSÁRIO?
-    Se o script travar no meio do volume v005, ao reiniciar ele lê o arquivo 
-    v005 para saber quais vídeos ele já tinha colocado lá dentro, evitando 
-    duplicar o conteúdo.
+    Suporta tanto o novo formato Frontmatter YAML quanto o formato legado.
     """
     recovered_metadata_list: List[Dict[str, str]] = []
     
+    # 1. Tenta extrair usando o novo padrão Frontmatter YAML / <article>
+    yaml_pattern: Pattern = re.compile(
+        r'title:\s*"(.*?)"\nvideo_id:\s*"(.*?)"\nurl:\s*".*?"\ndate:\s*"(.*?)"',
+        re.MULTILINE
+    )
+    for match_obj in yaml_pattern.finditer(volume_content_str):
+        recovered_metadata_list.append({
+            "title": match_obj.group(1).strip(),
+            "id": match_obj.group(2).strip(),
+            "date": match_obj.group(3).strip()
+        })
+
+    if recovered_metadata_list:
+        return recovered_metadata_list
+
+    # 2. Fallback para padrão legado (ID:, DATA:, TITULO:)
     for match_obj in _VOLUME_METADATA_PATTERN.finditer(volume_content_str):
         recovered_metadata_list.append({
             "id": match_obj.group(1).strip(),
@@ -622,105 +657,75 @@ def extract_metadata_from_volume(volume_content_str: str) -> List[Dict[str, str]
         
     return recovered_metadata_list
 
+
 def generate_volume_index(video_metadata_list: List[Dict[str, str]]) -> str:
     """
     Cria uma "Tabela de Conteúdo" ao final do arquivo de volume.
     
     EXPLICAÇÃO PARA JUNIORES:
     Como nossos volumes são arquivos de texto gigantes, o índice ajuda a 
-    IA a encontrar rapidamente onde cada vídeo começa. É como o sumário de um livro.
+    IA (NotebookLM) a rapidamente encontrar em qual posição do arquivo 
+    está cada assunto sem precisar ler tudo de novo.
     """
-    if not video_metadata_list:
-        return ""
-    
-    # 1. Remove duplicatas (caso um vídeo tenha sido processado duas vezes por erro)
-    unique_metadata_list: List[Dict[str, str]] = _deduplicate_metadata(video_metadata_list)
-    
-    # 2. Ordena por data para que os vídeos fiquem em ordem cronológica no índice
-    unique_metadata_list.sort(key=lambda x: (x.get("date", ""), x.get("title", "")))
-    
-    # 3. Constrói as linhas do índice
+    deduped_meta_list: List[Dict[str, str]] = _deduplicate_metadata(video_metadata_list)
     index_lines_list: List[str] = _initialize_index_header()
-    for meta_dict in unique_metadata_list:
+    for meta_dict in deduped_meta_list:
         index_lines_list.append(_format_index_line(meta_dict))
-        
-    index_lines_list.append(f"{'='*60}\n")
     return "\n".join(index_lines_list)
 
 
 def _initialize_index_header() -> List[str]:
-    """Retorna as linhas iniciais do cabeçalho do índice formatado."""
+    """Cria os títulos e linhas da Tabela de Índice."""
     return [
         f"\n\n{'='*60}",
-        "ÍNDICE DE VÍDEOS NESTE VOLUME (Detalhamento):",
-        f"{'-'*60}",
-        f"{'ID':<15} | {'DATA':<10} | {'TÍTULO'}",
-        f"{'-'*60}"
+        "ÍNDICE DE VÍDEOS NESTE VOLUME",
+        f"{'='*60}"
     ]
 
 
 def _format_index_line(meta_dict: Dict[str, str]) -> str:
-    """Formata uma linha individual do índice com colunas alinhadas."""
-    vid_id_str: str = meta_dict.get("id", "Sem ID")
-    date_str: str = meta_dict.get("date", "Desconhecida")
+    """Formata uma linha individual do índice."""
     title_str: str = meta_dict.get("title", "Sem Título")
-    
-    # Limita o título para não quebrar a formatação da tabela se for muito longo
-    # Aumentado para 80 caracteres para melhor leitura.
-    if len(title_str) > 80:
-        title_str = title_str[:77] + "..."
-        
-    return f"{vid_id_str:<15} | {date_str:<10} | {title_str}"
+    id_str: str = meta_dict.get("id", "Sem ID")
+    date_str: str = meta_dict.get("date", "Desconhecida")
+    return f"* [{date_str}] {title_str} (ID: {id_str})"
 
 
 def _deduplicate_metadata(metadata_list: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    """Garante que cada ID de vídeo apareça apenas uma vez no índice."""
+    """Remove entradas duplicadas de metadados mantendo a ordem de aparição."""
     seen_ids_set: Set[str] = set()
-    unique_list_list: List[Dict[str, str]] = []
-    
+    deduped_list: List[Dict[str, str]] = []
     for meta_dict in metadata_list:
-        vid_id_str: str = meta_dict.get("id", "Sem ID")
-        if vid_id_str not in seen_ids_set:
-            unique_list_list.append(meta_dict)
+        vid_id_str: str = meta_dict.get("id", "")
+        if vid_id_str and vid_id_str not in seen_ids_set:
             seen_ids_set.add(vid_id_str)
-            
-    return unique_list_list
+            deduped_list.append(meta_dict)
+    return deduped_list
+
 
 def scan_volumes_for_files(output_dir_path_str: str, channel_name_str: str) -> Tuple[Set[str], Set[str], int, int]:
     """
-    Verifica o que já existe fisicamente gravado no disco.
-    
-    ESTRATÉGIA DE "REALITY CHECK":
-    Mesmo que o arquivo JSON diga que processamos 100 vídeos, se os arquivos 
-    de Volume no disco sumirem (deletados por engano), o script deve ser 
-    capaz de detectar isso e reprocessar o necessário. É uma camada extra de segurança.
-    
-    Retorna: (Arquivos_Lidos, IDs_Lidos, Ultimo_Volume_ID, Tamanho_Ultimo_Volume)
+    Varre a pasta de saída em busca de arquivos de volume já gerados (ex: v001.txt, v002.txt).
+    Lê o conteúdo deles para saber exatamente quais vídeos e arquivos já foram processados.
     """
     files_set_set: Set[str] = set()
     ids_set_set: Set[str] = set()
-    max_idx_int: int = 0
+    max_idx_int: int = 1
     max_bytes_int: int = 0
     
     if not os.path.exists(output_dir_path_str):
-        return files_set_set, ids_set_set, 0, 0
-    
-    # Procura arquivos que seguem o padrão "NomeDoCanal-v001.txt"
-    vol_pattern_obj: Pattern = re.compile(rf"^{re.escape(channel_name_str)}-v(\d{{3}})\.txt$")
-    
+        return files_set_set, ids_set_set, max_idx_int, max_bytes_int
+        
     for fname_str in os.listdir(output_dir_path_str):
-        match_obj: Optional[re.Match] = vol_pattern_obj.match(fname_str)
+        match_obj = re.match(rf"^{re.escape(channel_name_str)}-v(\d+)\.txt$", fname_str)
         if match_obj:
             idx_int: int = int(match_obj.group(1))
             fpath_str: str = os.path.join(output_dir_path_str, fname_str)
             fsize_int: int = os.path.getsize(fpath_str)
             
-            # Mantemos o controle do maior índice (v005 > v004) para saber 
-            # de onde continuar sem sobrescrever volumes prontos.
             if idx_int > max_idx_int:
                 max_idx_int, max_bytes_int = idx_int, fsize_int
                 
-            # Abre o volume e "re-aprende" quais vídeos estão lá dentro lendo o conteúdo
             _parse_volume_manifest(fpath_str, files_set_set, ids_set_set)
             
     return files_set_set, ids_set_set, max_idx_int, max_bytes_int
@@ -729,27 +734,31 @@ def scan_volumes_for_files(output_dir_path_str: str, channel_name_str: str) -> T
 def _parse_volume_manifest(file_path_str: str, files_set_set: Set[str], ids_set_set: Set[str]) -> None:
     """
     Lê um arquivo de volume e descobre quais arquivos originais e IDs ele contém.
-    Isso reconstrói o estado do sistema a partir dos arquivos físicos.
+    Suporta tanto a sintaxe legada quanto a sintaxe YAML / <article>.
     """
     try:
         with open(file_path_str, 'r', encoding='utf-8-sig') as file_descriptor_obj:
             for raw_line_str in file_descriptor_obj:
-                # Buscamos as etiquetas que colocamos no topo de cada bloco de vídeo
-                # EXPLICAÇÃO PARA JUNIORES:
-                # O Lexis deixa "etiquetas" (ARQUIVO: e ID:) escondidas no texto para 
-                # que possamos recuperar essas informações depois se precisarmos.
-                if raw_line_str.startswith("ARQUIVO: "):
-                    files_set_set.add(raw_line_str.strip().replace("ARQUIVO: ", ""))
-                elif raw_line_str.startswith("ID: "):
-                    vid_id_str: str = raw_line_str.strip().replace("ID: ", "")
+                line_clean_str: str = raw_line_str.strip()
+                if line_clean_str.startswith("ARQUIVO: "):
+                    files_set_set.add(line_clean_str.replace("ARQUIVO: ", ""))
+                elif line_clean_str.startswith("file_source: "):
+                    files_set_set.add(line_clean_str.replace("file_source: ", "").strip('"'))
+                elif line_clean_str.startswith("ID: "):
+                    vid_id_str: str = line_clean_str.replace("ID: ", "")
                     if vid_id_str and vid_id_str != "Sem ID":
-                        # Validação para evitar IDs corrompidos ou fatiados incorretamente
+                        is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
+                        is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
+                        if is_youtube or is_vimeo:
+                            ids_set_set.add(vid_id_str)
+                elif line_clean_str.startswith("video_id: "):
+                    vid_id_str: str = line_clean_str.replace("video_id: ", "").strip('"')
+                    if vid_id_str and vid_id_str != "Sem ID":
                         is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
                         is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
                         if is_youtube or is_vimeo:
                             ids_set_set.add(vid_id_str)
     except Exception:
-        # Se um arquivo estiver ilegível, apenas ignoramos este bloco específico
         pass
 
 def process_channel(channel_dir_path_str: str, channel_name_str: str, reset_mode_bool: bool = False) -> None:

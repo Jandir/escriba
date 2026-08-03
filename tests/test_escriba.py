@@ -65,7 +65,7 @@ def test_create_adaptive_windows_basic():
     windows_list, clean_texts = create_adaptive_windows(subs_list, window_size_s_int=60)
     
     assert len(windows_list) == 1
-    assert windows_list[0]["text"] == "Olá Mundo"
+    assert windows_list[0]["text"] == "Olá. Mundo."
 
 
 
@@ -395,7 +395,7 @@ E ativar o sininho de notificacoes
         md = result.read_text(encoding="utf-8-sig")
         assert "---" in md
         assert "Teste Python" in md
-        assert "### Transcri" in md
+        assert "## Transcri" in md
 
 
 def test_srt_to_md_empty_file():

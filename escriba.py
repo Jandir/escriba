@@ -91,8 +91,8 @@ import time
 import functools
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils import print_ok, print_err, print_warn, print_info, print_skip, print_dl, print_section, print_header, print_countdown, extract_video_id, format_date, BOLD, RESET, DIM, GREEN, RED, YELLOW, BLUE, WHITE, BCYAN, BWHITE, BRED, BGREEN, BYELLW, ICON_OK, ICON_ERR, ICON_WARN, ICON_SKIP, ICON_DL, ICON_WAIT, ICON_INFO
-from rules import clean_ekklezia_terms
-from history import get_latest_json_path, load_all_local_history, save_channel_state_json, auto_migrate_legacy_files, migrate_all_databases, filter_state_list, register_channel_in_json
+from rules import clean_ekklezia_terms, restore_punctuation_heuristics, fix_sentence_capitalization
+from history import get_latest_json_path, load_all_local_history, save_channel_state_json, auto_migrate_legacy_files, migrate_all_databases, filter_state_list, register_channel_in_json, _deduplicate_channel_list
 import youtube
 from youtube import configure_cookies, filter_youtube_cookies
 import vimeo
@@ -107,7 +107,7 @@ import requests
 
 from collections import Counter
 
-VERSION = "2.7.1"
+VERSION = "2.8.0"
 DEFAULT_THRESHOLD = 0.3
 
 _script_dir = Path(__file__).parent.resolve()
@@ -538,54 +538,90 @@ def _seg_keywords(seg_wins_list: list, tfidf_vec_obj, tfidf_mat_obj, win_indices
     return " · ".join(keywords_list) if keywords_list else ""
 
 def create_adaptive_windows(subs_list, window_size_s_int: int) -> tuple[list[dict], dict]:
-    """Agrupa legendas em janelas adaptativas. Retorna (windows, clean_texts)."""
+    """Agrupa legendas em janelas adaptativas aplicando restauração local de pontuação. Retorna (windows, clean_texts)."""
     windows_list: list[dict] = []
     current_window_subs_list: list = []
     clean_texts: dict = {}
+    if not subs_list:
+        return windows_list, clean_texts
+
     start_time_obj = subs_list[0].start
     prev_sub_text_str: str = ""
-    for sub_obj in subs_list:
+    total_subs_int: int = len(subs_list)
+
+    for i_int, sub_obj in enumerate(subs_list):
         raw_text_str: str = re.sub(r"<[^>]+>", "", sub_obj.text.replace('\n', ' ')).strip()
         clean_text_str: str = _strip_rollup(raw_text_str, prev_sub_text_str)
         if clean_text_str:
             prev_sub_text_str = raw_text_str
-            clean_texts[id(sub_obj)] = clean_text_str
+            # Calcula pausa até a próxima legenda para pontuação acústica
+            pause_s_float: float = 0.0
+            is_last_bool: bool = (i_int == total_subs_int - 1)
+            if not is_last_bool:
+                next_start = subs_list[i_int + 1].start
+                cur_end = sub_obj.end
+                pause_s_float = max(0.0, _calc_total_seconds(next_start) - _calc_total_seconds(cur_end))
+
+            punct_text_str: str = restore_punctuation_heuristics(clean_text_str, pause_s_float, is_last_bool)
+            clean_texts[id(sub_obj)] = punct_text_str
             current_window_subs_list.append(sub_obj)
+
         if (sub_obj.end - start_time_obj).seconds > window_size_s_int and current_window_subs_list:
             w_text_str: str = " ".join(clean_texts.get(id(s), "") for s in current_window_subs_list)
             if w_text_str:
                 windows_list.append({'text': w_text_str, 'timestamp': str(current_window_subs_list[0].start).split(',')[0], 'subs': current_window_subs_list})
             current_window_subs_list, start_time_obj = [], sub_obj.start
+
     if current_window_subs_list:
         w_text_str: str = " ".join(clean_texts.get(id(s), "") for s in current_window_subs_list)
         if w_text_str:
             windows_list.append({'text': w_text_str, 'timestamp': str(current_window_subs_list[0].start).split(',')[0], 'subs': current_window_subs_list})
+
     return windows_list, clean_texts
 
 def get_adaptive_config(total_duration_s: int) -> tuple[int, float, int]:
     """Calcula parâmetros adaptativos baseados na duração do vídeo."""
     if total_duration_s < 1800:
         win_size = 30
-        adapt_thresh = 0.25
+        adapt_thresh = 0.65
         min_segs = 3
     elif total_duration_s < 3600:
         win_size = 60
-        adapt_thresh = 0.35
+        adapt_thresh = 0.70
         min_segs = 5
     else:
         win_size = 90
-        adapt_thresh = 0.50
-        min_segs = 10
+        adapt_thresh = 0.75
+        min_segs = 8
     return win_size, adapt_thresh, min_segs
 
-def detect_topic_breaks(tfidf_matrix, adapt_thresh: float, cosine_similarity_func) -> set[int]:
-    """Identifica quebras de tópico baseadas na similaridade de cosseno entre janelas."""
+def detect_topic_breaks(tfidf_matrix, adapt_thresh: float, cosine_similarity_func, min_segs: int = 3) -> set[int]:
+    """
+    Identifica quebras de tópico baseadas na similaridade de cosseno entre janelas.
+    Garante que o vídeo possua um número mínimo de capítulos selecionando os vales de menor similaridade.
+    """
     breaks = {0}
     num_windows = tfidf_matrix.shape[0]
+    if num_windows <= 1:
+        return breaks
+
+    sims = []
     for i in range(1, num_windows):
-        sim = cosine_similarity_func(tfidf_matrix[i], tfidf_matrix[i-1])[0][0]
-        if sim < adapt_thresh:
+        sim_val = float(cosine_similarity_func(tfidf_matrix[i], tfidf_matrix[i-1])[0][0])
+        sims.append((i, sim_val))
+        if sim_val < adapt_thresh:
             breaks.add(i)
+
+    # Se a similaridade estrita gerou menos capítulos que min_segs, selecionamos as menores similaridades
+    target_breaks = min(min_segs, num_windows)
+    if len(breaks) < target_breaks and sims:
+        sorted_sims = sorted(sims, key=lambda x: x[1])
+        for idx, _ in sorted_sims:
+            if not any(abs(idx - existing) < 2 for existing in breaks):
+                breaks.add(idx)
+            if len(breaks) >= target_breaks:
+                break
+
     return breaks
 
 def assemble_segments(windows_list: list[dict], topic_breaks_set: set[int]) -> list[tuple]:
@@ -663,8 +699,8 @@ def _dedup_lines(lines: list[str]) -> list[str]:
     out = []
     for line in lines:
         if out:
-            prev_words = out[-1].lower().split()
-            cur_words  = line.lower().split()
+            prev_words = [w.strip(".,!?:;\"'") for w in out[-1].lower().split()]
+            cur_words  = [w.strip(".,!?:;\"'") for w in line.lower().split()]
             min_len = min(len(prev_words), len(cur_words))
             overlap = min_len > 0 and all(prev_words[i] == cur_words[i] for i in range(min_len))
             if overlap:
@@ -675,12 +711,12 @@ def _dedup_lines(lines: list[str]) -> list[str]:
     return out
 
 def _flush_paragraph(lines: list[str], para_ts: str, out: list[str]) -> None:
-    """Normaliza e emite um parágrafo capturado, com âncora de tempo."""
+    """Normaliza e emite um parágrafo capturado, com âncora de tempo e pontuação final."""
     if not lines:
         return
     text = " ".join(" ".join(lines).split())
     if text:
-        text = re.sub(r'(^|[.!?]\s+)(\w)', lambda m: m.group(0)[:-1] + m.group(0)[-1].upper(), text)
+        text = restore_punctuation_heuristics(text, is_last_segment=True)
         out.append(f"[{para_ts}] {clean_ekklezia_terms(text)}\n\n")
 
 def _init_md_processing(srt_path: Path, indentation_prefix: str) -> tuple | None:
@@ -740,10 +776,10 @@ def _process_sub_into_para(sub, para_start_time, para_lines_list, md_lines, sent
 
 
 def _generate_transcription_structured(segments: list, topic_labels: list[str], md_lines: list[str], clean_texts: dict | None = None):
-    """Gera a transcrição estruturada por tópicos."""
+    """Gera a transcrição estruturada por tópicos com hierarquia H3 (###)."""
     sentence_end_re = re.compile(r'[.!?]["\']?\s*$')
     for (ts_str, _, seg_wins_list), label_str in zip(segments, topic_labels):
-        md_lines.append(f"#### [{ts_str}] - Tópico: {label_str}\n")
+        md_lines.append(f"### [{ts_str}] - Tópico: {label_str}\n")
         para_lines_list, para_start_time = [], None
         for window_dict in seg_wins_list:
             for sub_obj in window_dict['subs']:
@@ -755,8 +791,8 @@ def _generate_transcription_structured(segments: list, topic_labels: list[str], 
 
 
 def _generate_md_body_sections(md_lines, segs_list, vec, tfidf_mat, stops, clean_texts=None):
-    """Gera as seções de segmentos e transcrição do MD."""
-    md_lines.append("### Segmentos de Tópicos (Timestamps)\n")
+    """Gera as seções de segmentos e transcrição do MD seguindo hierarquia H2 (##) e H3 (###)."""
+    md_lines.append("## Sumário e Tópicos (Timestamps)\n")
     topic_labels_list, win_idx_int = [], 0
     for _, idx_int, s_wins in segs_list:
         indices_list = list(range(win_idx_int, win_idx_int + len(s_wins)))
@@ -765,7 +801,7 @@ def _generate_md_body_sections(md_lines, segs_list, vec, tfidf_mat, stops, clean
         label_str = "Introdução" if idx_int == 1 else (kw_str if kw_str else f"Tópico {idx_int}")
         topic_labels_list.append(label_str)
         md_lines.append(f"* `[{_smart_ts(s_wins[0]['subs'][0].start)}]` **{label_str}**\n")
-    md_lines.append("\n### Transcrição Estruturada\n")
+    md_lines.append("\n## Transcrição Estruturada por Capítulos\n")
     _generate_transcription_structured(segs_list, topic_labels_list, md_lines, clean_texts)
 
 
@@ -2490,7 +2526,7 @@ def _get_channels_to_sync(json_path: Path, user_canal_str: str | None) -> list[s
         if isinstance(yt_chans, list): all_chans.extend(yt_chans)
         if isinstance(vi_chans, list): all_chans.extend(vi_chans)
         
-        return all_chans
+        return _deduplicate_channel_list(all_chans)
     except Exception:
         return []
 
