@@ -338,19 +338,19 @@ def sync_video_records(
 
 def _read_persisted_lang(json_path: Path) -> str | None:
     """Tenta ler o idioma detectado salvo no JSON."""
-    if not json_path.exists(): return None
     try:
         with open(json_path, "r", encoding="utf-8") as fd:
             data_dict = json.load(fd)
             return data_dict.get("detected_language") if isinstance(data_dict, dict) else None
-    except Exception: return None
+    except OSError:
+        return None
+    except Exception:
+        return None
 
 
 def _load_existing_state_map(json_path: Path) -> dict[str, dict]:
     """Carrega o mapa de vídeos do JSON existente."""
     state_dict = {}
-    if not json_path.exists():
-        return state_dict
     try:
         with open(json_path, "r", encoding="utf-8") as fd_obj:
             data_obj = json.load(fd_obj)
@@ -359,6 +359,8 @@ def _load_existing_state_map(json_path: Path) -> dict[str, dict]:
                 vid_id_str = v_dict.get("video_id") or v_dict.get("id")
                 if vid_id_str:
                     state_dict[vid_id_str] = v_dict
+    except OSError:
+        pass
     except Exception:
         pass
     return state_dict
@@ -683,11 +685,12 @@ def _flush_paragraph(lines: list[str], para_ts: str, out: list[str]) -> None:
 
 def _init_md_processing(srt_path: Path, indentation_prefix: str) -> tuple | None:
     """Carrega dependências e abre o arquivo SRT com validação."""
-    if not srt_path.exists():
+    try:
+        if srt_path.stat().st_size == 0:
+            print_warn(f"Arquivo SRT vazio: {srt_path.name}", indentation_prefix)
+            return None
+    except OSError:
         print_warn(f"Arquivo SRT não encontrado: {srt_path.name}", indentation_prefix)
-        return None
-    if srt_path.stat().st_size == 0:
-        print_warn(f"Arquivo SRT vazio: {srt_path.name}", indentation_prefix)
         return None
     deps = _load_ml_deps()
     if not deps:
@@ -1935,8 +1938,8 @@ def _run_deferred_md_conversion(pending_list: list[tuple], cli_args_ns: argparse
             indentation_prefix_str="    "
         )
         
-        if not cli_args_ns.keep_srt and srt_path.exists():
-            try: srt_path.unlink()
+        if not cli_args_ns.keep_srt:
+            try: srt_path.unlink(missing_ok=True)
             except Exception: pass
             
         return vid_id_str, md_path
