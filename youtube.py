@@ -722,6 +722,7 @@ def filter_youtube_cookies(cookies_path_obj: Path) -> None:
         # Grava de volta o arquivo higienizado
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:
             file_descriptor_obj.writelines(filtered_lines_list)
+        cookies_path_obj.chmod(0o600)
             
     except Exception as error_obj:
         print_warn(f"Não foi possível higienizar os cookies extraídos: {error_obj}")
