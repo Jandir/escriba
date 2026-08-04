@@ -412,6 +412,14 @@ def _clean_noise_patterns(text_str: str) -> str:
     return _NEWLINE_PATTERN.sub('\n\n', cleaned_str).strip()
 
 
+def _escape_yaml_string(val: str) -> str:
+    """Escapa strings para uso seguro dentro de aspas duplas no YAML."""
+    val = val.replace('\\', '\\\\')
+    val = val.replace('\n', '\\n')
+    val = val.replace('\r', '\\r')
+    val = val.replace('"', '\\"')
+    return val
+
 def _format_lexis_block(text_str: str, filename_str: str, metadata_dict: Dict[str, str]) -> str:
     """
     Formata o bloco consolidado encapsulando cada vídeo em tags <article> e Frontmatter YAML,
@@ -437,11 +445,11 @@ def _format_lexis_block(text_str: str, filename_str: str, metadata_dict: Dict[st
     lines_list: List[str] = [
         "\n<article class=\"video-entry\">",
         "---",
-        f"title: \"{title_str}\"",
-        f"video_id: \"{video_id_str}\"",
-        f"url: \"{url_str}\"",
-        f"date: \"{date_str}\"",
-        f"file_source: \"{filename_str}\"",
+        'title: "{}"'.format(_escape_yaml_string(title_str)),
+        'video_id: "{}"'.format(_escape_yaml_string(video_id_str)),
+        'url: "{}"'.format(_escape_yaml_string(url_str)),
+        'date: "{}"'.format(_escape_yaml_string(date_str)),
+        'file_source: "{}"'.format(_escape_yaml_string(filename_str)),
         "---",
         ""
     ] + header_prefix_lines + [
