@@ -7,3 +7,6 @@
 ## 2026-07-09 - Avoid redundant file system calls
 **Learning:** Codebase performance pattern: Avoid redundant file system calls (like double `stat()` calls) when traversing directories. For example, instead of checking `if path.exists(): mtime = path.stat().st_mtime`, this results in two filesystem calls. The first call `exists()` does a `stat()` under the hood, and the second `stat()` call does it again. Using a `try: mtime = path.stat().st_mtime except OSError: mtime = 0.0` block reduces syscall overhead by half.
 **Action:** When accessing file metadata in loops or comprehensions, use `try...except OSError` blocks around `path.stat()` instead of checking `path.exists()` first.
+## 2026-07-28 - Optimize directory scanning with os.scandir
+**Learning:** Using `os.listdir()` followed by `os.path.getsize()` or `pathlib.Path.glob()` followed by `Path.stat()` issues multiple costly syscalls per file. `os.scandir()` returns `DirEntry` objects which cache file attributes (like size and modification time), significantly speeding up directory traversals.
+**Action:** Always prefer `os.scandir()` over `os.listdir()` or `pathlib.Path.glob()` when scanning directories if you also need file attributes like size, type (is_file/is_dir), or modification time.
