@@ -713,20 +713,24 @@ def scan_volumes_for_files(output_dir_path_str: str, channel_name_str: str) -> T
     max_idx_int: int = 1
     max_bytes_int: int = 0
     
-    if not os.path.exists(output_dir_path_str):
-        return files_set_set, ids_set_set, max_idx_int, max_bytes_int
-        
-    for fname_str in os.listdir(output_dir_path_str):
-        match_obj = re.match(rf"^{re.escape(channel_name_str)}-v(\d+)\.txt$", fname_str)
-        if match_obj:
-            idx_int: int = int(match_obj.group(1))
-            fpath_str: str = os.path.join(output_dir_path_str, fname_str)
-            fsize_int: int = os.path.getsize(fpath_str)
-            
-            if idx_int > max_idx_int:
-                max_idx_int, max_bytes_int = idx_int, fsize_int
-                
-            _parse_volume_manifest(fpath_str, files_set_set, ids_set_set)
+    try:
+        # BOLT OPTIMIZATION: Avoid redundant stat() calls using os.scandir
+        # and globally pre-compiling regex avoids recompilation overhead inside the function
+        vol_pattern_obj = re.compile(rf"^{re.escape(channel_name_str)}-v(\d+)\.txt$")
+        with os.scandir(output_dir_path_str) as entries:
+            for entry in entries:
+                if entry.is_file(follow_symlinks=False):
+                    match_obj = vol_pattern_obj.match(entry.name)
+                    if match_obj:
+                        idx_int: int = int(match_obj.group(1))
+                        fsize_int: int = entry.stat().st_size
+
+                        if idx_int > max_idx_int:
+                            max_idx_int, max_bytes_int = idx_int, fsize_int
+
+                        _parse_volume_manifest(entry.path, files_set_set, ids_set_set)
+    except OSError:
+        pass
             
     return files_set_set, ids_set_set, max_idx_int, max_bytes_int
 
@@ -1303,10 +1307,15 @@ def _scan_for_channel_files(dir_path_str: str) -> List[str]:
     """
     dir_name_str: str = os.path.basename(os.path.abspath(dir_path_str))
     pattern_obj = re.compile(rf"^{re.escape(dir_name_str)}[-]+[A-Za-z0-9_-]{{9,15}}(?:-[a-zA-Z0-9-]+)?\.(txt|srt|md)$")
-    return [
-        f for f in os.listdir(dir_path_str) 
-        if pattern_obj.match(f)
-    ]
+    result: List[str] = []
+    try:
+        with os.scandir(dir_path_str) as entries:
+            for entry in entries:
+                if entry.is_file(follow_symlinks=False) and pattern_obj.match(entry.name):
+                    result.append(entry.name)
+    except OSError:
+        pass
+    return result
 
 
 def _has_archived_files(dir_path_str: str) -> bool:

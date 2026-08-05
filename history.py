@@ -1,3 +1,4 @@
+import os
 import json
 import re
 from pathlib import Path
@@ -37,19 +38,23 @@ def _find_legacy_databases(cwd_path: Path) -> List[Path]:
     - O comando `x_path.stat().st_mtime` nos dá a data e segundo exatos em formato de 'timestamp Epoch'
       em que o arquivo foi modificado pelo sistema operacional.
     """
-    patterns_list: List[str] = ["escriba_*.json", "lista_*.json"]
-    found_paths_list: List[Path] = []
+    found_paths_list: List[Tuple[Path, float]] = []
     
-    for pattern_str in patterns_list:
-        found_paths_list.extend(list(cwd_path.glob(pattern_str)))
-    
-    def _safe_mtime(x_path: Path) -> float:
-        try:
-            return x_path.stat().st_mtime
-        except OSError:
-            return 0.0
+    try:
+        with os.scandir(cwd_path) as entries:
+            for entry in entries:
+                try:
+                    if entry.is_file(follow_symlinks=False):
+                        name = entry.name
+                        if (name.startswith("escriba_") or name.startswith("lista_")) and name.endswith(".json"):
+                            mtime = entry.stat().st_mtime
+                            found_paths_list.append((cwd_path / name, mtime))
+                except OSError:
+                    continue
+    except OSError:
+        pass
 
-    return sorted(found_paths_list, key=_safe_mtime, reverse=True)
+    return [p[0] for p in sorted(found_paths_list, key=lambda x: x[1], reverse=True)]
 
 
 def get_latest_json_path(cwd_path: Path) -> Path:
