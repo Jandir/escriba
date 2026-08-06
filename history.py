@@ -4,6 +4,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from utils import print_ok, print_err, print_info, print_warn, print_section, BOLD, RESET, format_date
 
+# BOLT OPTIMIZATION: Pre-compiled regex patterns to avoid repeated compilation overhead in hot paths.
+_YT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_VIMEO_ID_PATTERN = re.compile(r"^\d{7,12}$")
+
 """
 MÓDULO HISTORY: A Memória do Escriba
 -----------------------------------
@@ -197,8 +201,8 @@ def _populate_history_from_list(video_list: List[Dict[str, Any]], history_map_di
         video_id_str: Optional[str] = video_dict.get("video_id") or video_dict.get("id")
         if video_id_str:
             if "pytest" not in sys.modules:
-                is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", video_id_str)
-                is_vimeo = re.match(r"^\d{7,12}$", video_id_str)
+                is_youtube = _YT_ID_PATTERN.match(video_id_str)
+                is_vimeo = _VIMEO_ID_PATTERN.match(video_id_str)
                 if not (is_youtube or is_vimeo):
                     continue
             _merge_video_data(history_map_dict, video_id_str, video_dict)
@@ -342,8 +346,8 @@ def _deduplicate_videos(videos_list: List[Dict[str, Any]]) -> List[Dict[str, Any
             
         # Filtra IDs inválidos ou truncados (a menos que estejamos rodando testes unitários)
         if "pytest" not in sys.modules:
-            is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", video_id_str)
-            is_vimeo = re.match(r"^\d{7,12}$", video_id_str)
+            is_youtube = _YT_ID_PATTERN.match(video_id_str)
+            is_vimeo = _VIMEO_ID_PATTERN.match(video_id_str)
             if not (is_youtube or is_vimeo):
                 continue
                 
@@ -369,7 +373,7 @@ def _load_existing_json_safely(json_path: Path) -> Dict[str, Any]:
 
 def _is_video_url_or_id(input_str: str) -> bool:
     """Retorna True se a string de entrada parecer ser um vídeo individual (ID ou URL)."""
-    if re.match(r"^[A-Za-z0-9_-]{11}$", input_str) or re.match(r"^\d{7,12}$", input_str):
+    if _YT_ID_PATTERN.match(input_str) or _VIMEO_ID_PATTERN.match(input_str):
         return True
     if "watch?v=" in input_str or "youtu.be/" in input_str or "vimeo.com/" in input_str:
         if any(x in input_str for x in ["/showcase/", "/channels/", "list="]):

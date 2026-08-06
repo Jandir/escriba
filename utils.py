@@ -169,6 +169,7 @@ _LANG_PATTERN = re.compile(r'[.\-][a-z]{2}(?:-[a-z]{2,3})?$', flags=re.IGNORECAS
 _YT_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{11}$')
 _YT_ID_SEARCH_PATTERN = re.compile(r'([A-Za-z0-9_-]{11})')
 _YT_ID_CHAR_PATTERN = re.compile(r'[A-Za-z0-9_-]')
+_DATE_ISO_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
 
 def extract_video_id(filename_or_path: str) -> str:
@@ -251,7 +252,7 @@ def format_date(raw_date_any: Optional[str | int]) -> str:
         return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
     
     # Caso 2: Já está no formato adequado ISO (YYYY-MM-DD)
-    if re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+    if _DATE_ISO_PATTERN.match(date_str):
         return date_str
         
     # Fallback suave caso venha qualquer string inusitada (por exemplo, "None" ou "N/A")

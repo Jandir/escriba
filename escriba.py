@@ -640,7 +640,7 @@ def assemble_segments(windows_list: list[dict], topic_breaks_set: set[int]) -> l
 def get_provider(url: str) -> str:
     """Retorna 'vimeo' ou 'youtube' baseado na URL."""
     if not url: return "youtube"
-    if "vimeo.com" in url or re.match(r"^\d+$", url):
+    if "vimeo.com" in url or _VIMEO_URL_PATTERN.match(url):
         return "vimeo"
     return "youtube"
 
@@ -1175,6 +1175,7 @@ def _add_utility_args(parser_obj: argparse.ArgumentParser) -> None:
 # Regex para detectar YouTube video ID (exatamente 11 chars alfanuméricos + _ e -)
 VIDEO_ID_REGEX_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 VIMEO_ID_REGEX_PATTERN = re.compile(r"^\d{7,12}$")
+_VIMEO_URL_PATTERN = re.compile(r"^\d+$")
 
 
 def _try_parse_video_input(input_str: str) -> tuple[str, str, str] | None:
