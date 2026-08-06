@@ -716,17 +716,25 @@ def scan_volumes_for_files(output_dir_path_str: str, channel_name_str: str) -> T
     if not os.path.exists(output_dir_path_str):
         return files_set_set, ids_set_set, max_idx_int, max_bytes_int
         
-    for fname_str in os.listdir(output_dir_path_str):
-        match_obj = re.match(rf"^{re.escape(channel_name_str)}-v(\d+)\.txt$", fname_str)
-        if match_obj:
-            idx_int: int = int(match_obj.group(1))
-            fpath_str: str = os.path.join(output_dir_path_str, fname_str)
-            fsize_int: int = os.path.getsize(fpath_str)
-            
-            if idx_int > max_idx_int:
-                max_idx_int, max_bytes_int = idx_int, fsize_int
-                
-            _parse_volume_manifest(fpath_str, files_set_set, ids_set_set)
+    # BOLT OPTIMIZATION:
+    # 1. Pre-compile the regex pattern outside the loop to avoid redundant compilation overhead per file.
+    # 2. Use os.scandir() instead of os.listdir() to fetch directory entries along with their file attributes
+    #    (like file size via entry.stat().st_size) in a single system call per entry. This avoids the O(N)
+    #    overhead of making separate os.path.getsize() system calls for each matching file.
+    vol_pattern_obj: Pattern = re.compile(rf"^{re.escape(channel_name_str)}-v(\d+)\.txt$")
+    with os.scandir(output_dir_path_str) as it:
+        for entry in it:
+            if entry.is_file(follow_symlinks=False):
+                fname_str = entry.name
+                match_obj = vol_pattern_obj.match(fname_str)
+                if match_obj:
+                    idx_int: int = int(match_obj.group(1))
+                    fsize_int: int = entry.stat().st_size
+
+                    if idx_int > max_idx_int:
+                        max_idx_int, max_bytes_int = idx_int, fsize_int
+
+                    _parse_volume_manifest(entry.path, files_set_set, ids_set_set)
             
     return files_set_set, ids_set_set, max_idx_int, max_bytes_int
 
