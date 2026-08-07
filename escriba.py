@@ -506,9 +506,9 @@ def _strip_rollup(text_str: str, prev_text_str: str, overlap_ratio_float: float 
     prev_tokens_list, cur_tokens_list = prev_text_str.split(), text_str.split()
     if not prev_tokens_list or not cur_tokens_list: return text_str
     overlap_int: int = 0
-    for i_int, token_str in enumerate(cur_tokens_list):
-        if i_int < len(prev_tokens_list) and token_str == prev_tokens_list[i_int]: overlap_int += 1
-        else: break
+    for t1, t2 in zip(cur_tokens_list, prev_tokens_list):
+        if t1 != t2: break
+        overlap_int += 1
     return " ".join(cur_tokens_list[overlap_int:])
 
 def _calc_total_seconds(pysrt_time) -> int:
