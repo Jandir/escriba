@@ -960,7 +960,7 @@ def _select_files_to_process(channel_path_str: str, all_files_list: List[str], p
         sorted_files_list_list: List[str] = sorted(files_list_list, key=_get_ext_priority)
         best_file_str: str = sorted_files_list_list[0]
         
-        # Se este ID já foi processado no passado, arquivamos todos os arquivos dele
+        # Se este ID já foi processado no passado, arquivamos os arquivos dele
         if vid_id_str in processed_ids_set:
             _archive_files(channel_path_str, archive_path_str, files_list_list)
             continue
