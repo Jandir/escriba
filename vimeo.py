@@ -9,6 +9,7 @@ import yt_dlp
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 from collections import Counter
+from dl_common import _download_video_common
 from utils import (
     print_ok, print_warn, print_info, print_err, 
     ICON_WAIT, BOLD, RESET, BCYAN, format_date
@@ -193,17 +194,6 @@ def generate_fast_list_json(
         return []
 
 
-def escriba_progress_hook(d):
-    """Callback invocado periodicamente pelo yt-dlp durante o download de arquivos.
-    No Windows, o interpretador Python fica bloqueado durante chamadas de rede C (I/O).
-    Executar código Python (como esta função) força o interpretador a checar por sinais
-    pendentes (como SIGINT/Ctrl+C) e disparar a KeyboardInterrupt imediatamente.
-    """
-    import sys
-    if getattr(sys, "_escriba_interrupted", False):
-        raise KeyboardInterrupt
-
-
 def download_video(
     yt_dlp_cmd_list: List[str], 
     cookie_args_list: List[str], 
@@ -223,7 +213,6 @@ def download_video(
     - O código utiliza o objeto `YoutubeDL` da biblioteca Python para orquestrar e gerenciar
       as tentativas de download de forma granular e limpa.
     """
-    from youtube import _normalize_lang_pattern
     
     output_template_str: str = f"{folder_name_str}-{video_id_str}.%(ext)s"
     vimeo_url = f"https://vimeo.com/{video_id_str}"
@@ -233,16 +222,9 @@ def download_video(
         print_err(f"ID do Vimeo inválido ou truncado: {video_id_str}")
         return 2
     
-    base_args = yt_dlp_cmd_list[3:] + cookie_args_list + [
-        "--ignore-no-formats-error",
-        "--write-info-json",
-        "--restrict-filenames",
-    ]
-    
     download_args = ["-f", "bestvideo[height<=1080]"] if download_video_only_hd else ["--skip-download"]
-    base_args.extend(download_args)
     
-    base_args.extend([
+    extra_dl_args = [
         "--write-sub",
         "--write-auto-sub",
         "--convert-subs", "srt",
@@ -251,190 +233,30 @@ def download_video(
         "--extractor-args", "vimeo:dash_manifest=false",
         "-o", output_template_str,
         vimeo_url
-    ])
+    ]
     
-    try:
-        parsed_opts = yt_dlp.parse_options(base_args)[3]
-        
-        # Modo extração inicial
-        extract_opts = dict(parsed_opts)
-        extract_opts.update({
-            'skip_download': True,
-            'quiet': True,
-            'no_warnings': True,
-            'writesubtitles': True,
-            'writeautomaticsub': True,
-        })
-        
-        with yt_dlp.YoutubeDL(extract_opts) as ydl:
-            info = ydl.extract_info(vimeo_url, download=False)
-            
-        if info is None:
-            raise ValueError("Não foi possível extrair informações do vídeo (info é None)")
-            
-        subtitles = info.get('subtitles') or {}
-        auto_captions = info.get('automatic_captions') or {}
-        
-        # Lista ordenada de prioridades para tentar casar legendas disponíveis
-        patterns_to_try = [
-            (lang_filter_str, False),
-            (lang_filter_str, True),
-            ("^pt.*", False),
-            ("^pt.*", True),
-            ("^en.*", False),
-            ("^en.*", True)
-        ]
-        
-        chosen_lang = None
-        is_auto = False
-        
-        for pat_str, want_auto in patterns_to_try:
-            if not pat_str:
-                continue
-            normalized_pat = _normalize_lang_pattern(pat_str)
-            regex = re.compile(normalized_pat, re.IGNORECASE)
-            
-            source_dict = auto_captions if want_auto else subtitles
-            
-            for lang_code in source_dict.keys():
-                if regex.match(lang_code):
-                    chosen_lang = lang_code
-                    is_auto = want_auto
-                    break
-            if chosen_lang:
-                break
-                
-        download_opts = dict(parsed_opts)
-        download_opts['progress_hooks'] = [escriba_progress_hook]
-        
-        if chosen_lang:
-            download_opts.update({
-                'writesubtitles': not is_auto,
-                'writeautomaticsub': is_auto,
-                'subtitleslangs': [chosen_lang],
-            })
-            
-            source_dict = auto_captions if is_auto else subtitles
-            formats = source_dict.get(chosen_lang, [])
-            if formats:
-                selected_format = next((f for f in formats if f.get('ext') == 'vtt'), formats[0])
-                info['requested_subtitles'] = {
-                    chosen_lang: {
-                        'ext': selected_format.get('ext'),
-                        'data': selected_format.get('data'),
-                        'url': selected_format.get('url'),
-                    }
-                }
-            else:
-                info['requested_subtitles'] = {}
-        else:
-            download_opts.update({
-                'writesubtitles': False,
-                'writeautomaticsub': False,
-                'subtitleslangs': [],
-            })
-            info['requested_subtitles'] = {}
-            
-        with yt_dlp.YoutubeDL(download_opts) as ydl_dl:
-            ydl_dl.process_info(info)
-            
-        return 0
-    except Exception as error_obj:
-        if getattr(sys, "_escriba_interrupted", False):
-            raise KeyboardInterrupt
-        print_warn(f"Erro ao baixar vídeo Vimeo {video_id_str}: {error_obj}. Tentando renovar cookies...")
-        try:
-            new_cookies_args_list: List[str] = _refresh_cookies_on_error(
-                Path.cwd(), Path(__file__).parent.resolve()
-            )
-            
-            base_args_retry = yt_dlp_cmd_list[3:] + new_cookies_args_list + [
-                "--ignore-no-formats-error",
-                "--write-info-json",
-                "--restrict-filenames",
-            ] + download_args + [
-                "--write-sub",
-                "--write-auto-sub",
-                "--convert-subs", "srt",
-                "--sub-langs", f"{lang_filter_str},pt.*,en.*",
-                "--extractor-args", "vimeo:dash_manifest=false",
-                "-o", output_template_str,
-                vimeo_url
-            ]
-            
-            parsed_opts_retry = yt_dlp.parse_options(base_args_retry)[3]
-            extract_opts_retry = dict(parsed_opts_retry)
-            extract_opts_retry.update({
-                'skip_download': True,
-                'quiet': True,
-                'no_warnings': True,
-                'writesubtitles': True,
-                'writeautomaticsub': True,
-            })
-            
-            with yt_dlp.YoutubeDL(extract_opts_retry) as ydl:
-                info = ydl.extract_info(vimeo_url, download=False)
-                
-            if info is None:
-                raise ValueError("Não foi possível extrair informações do vídeo após renovação de cookies (info é None)")
-                
-            subtitles = info.get('subtitles') or {}
-            auto_captions = info.get('automatic_captions') or {}
-            
-            chosen_lang = None
-            is_auto = False
-            
-            for pat_str, want_auto in patterns_to_try:
-                if not pat_str:
-                    continue
-                normalized_pat = _normalize_lang_pattern(pat_str)
-                regex = re.compile(normalized_pat, re.IGNORECASE)
-                source_dict = auto_captions if want_auto else subtitles
-                for lang_code in source_dict.keys():
-                    if regex.match(lang_code):
-                        chosen_lang = lang_code
-                        is_auto = want_auto
-                        break
-                if chosen_lang:
-                    break
-                    
-            download_opts_retry = dict(parsed_opts_retry)
-            download_opts_retry['progress_hooks'] = [escriba_progress_hook]
-            if chosen_lang:
-                download_opts_retry.update({
-                    'writesubtitles': not is_auto,
-                    'writeautomaticsub': is_auto,
-                    'subtitleslangs': [chosen_lang],
-                })
-                source_dict = auto_captions if is_auto else subtitles
-                formats = source_dict.get(chosen_lang, [])
-                if formats:
-                    selected_format = next((f for f in formats if f.get('ext') == 'vtt'), formats[0])
-                    info['requested_subtitles'] = {
-                        chosen_lang: {
-                            'ext': selected_format.get('ext'),
-                            'data': selected_format.get('data'),
-                            'url': selected_format.get('url'),
-                        }
-                    }
-                else:
-                    info['requested_subtitles'] = {}
-            else:
-                download_opts_retry.update({
-                    'writesubtitles': False,
-                    'writeautomaticsub': False,
-                    'subtitleslangs': [],
-                })
-                info['requested_subtitles'] = {}
-                
-            with yt_dlp.YoutubeDL(download_opts_retry) as ydl_dl:
-                ydl_dl.process_info(info)
-            return 0
-        except Exception as retry_error:
-            if getattr(sys, "_escriba_interrupted", False):
-                raise KeyboardInterrupt
-            print_err(f"Erro crítico Vimeo após cookies no vídeo {video_id_str}: {retry_error}")
-            return 2
+    patterns_to_try = [
+        (lang_filter_str, False),
+        (lang_filter_str, True),
+        ("^pt.*", False),
+        ("^pt.*", True),
+        ("^en.*", False),
+        ("^en.*", True)
+    ]
+
+    return _download_video_common(
+        video_id_str=video_id_str,
+        url=vimeo_url,
+        yt_dlp_cmd_list=yt_dlp_cmd_list,
+        cookie_args_list=cookie_args_list,
+        download_args=download_args,
+        extra_dl_args=extra_dl_args,
+        lang_filter_str=lang_filter_str,
+        output_template_str=output_template_str,
+        patterns_to_try=patterns_to_try,
+        refresh_cookies_func=_refresh_cookies_on_error,
+        is_vimeo=True
+    )
 
 
 def filter_vimeo_cookies(cookies_path_obj: Path) -> None:
