@@ -1,3 +1,4 @@
+import os
 import json
 import re
 from pathlib import Path
@@ -37,19 +38,23 @@ def _find_legacy_databases(cwd_path: Path) -> List[Path]:
     - O comando `x_path.stat().st_mtime` nos dá a data e segundo exatos em formato de 'timestamp Epoch'
       em que o arquivo foi modificado pelo sistema operacional.
     """
-    patterns_list: List[str] = ["escriba_*.json", "lista_*.json"]
-    found_paths_list: List[Path] = []
+    found_paths_list: List[Tuple[Path, float]] = []
     
-    for pattern_str in patterns_list:
-        found_paths_list.extend(list(cwd_path.glob(pattern_str)))
-    
-    def _safe_mtime(x_path: Path) -> float:
-        try:
-            return x_path.stat().st_mtime
-        except OSError:
-            return 0.0
+    try:
+        with os.scandir(cwd_path) as it:
+            for entry in it:
+                if entry.is_file() and entry.name.endswith(".json"):
+                    if entry.name.startswith("escriba_") or entry.name.startswith("lista_"):
+                        try:
+                            mtime = entry.stat().st_mtime
+                        except OSError:
+                            mtime = 0.0
+                        found_paths_list.append((Path(entry.path), mtime))
+    except OSError:
+        pass
 
-    return sorted(found_paths_list, key=_safe_mtime, reverse=True)
+    found_paths_list.sort(key=lambda x: x[1], reverse=True)
+    return [p for p, _ in found_paths_list]
 
 
 def get_latest_json_path(cwd_path: Path) -> Path:
@@ -133,25 +138,26 @@ def _scan_directory_for_history(
     Dividido em duas etapas para garantir integridade e performance de leitura.
     """
     try:
-        json_files_list: List[Path] = list(directory_path.glob("*.json"))
-        
+        master_files_list: List[Path] = []
+        info_files_list: List[Tuple[Path, str]] = []
+
+        with os.scandir(directory_path) as it:
+            for entry in it:
+                if entry.is_file() and entry.name.endswith(".json") and entry.name not in blacklist_names_set:
+                    if entry.name.startswith(("escriba_", "lista_")):
+                        master_files_list.append(Path(entry.path))
+                    else:
+                        info_files_list.append((Path(entry.path), entry.name))
+
         # 1. Primeiro processamos os bancos de dados mestre (escriba_ ou lista_)
         # Isso garante que history_map_dict já contenha a maior base de dados conhecida em memória rápida.
-        for json_file_path in json_files_list:
-            if json_file_path.name in blacklist_names_set: 
-                continue
-            if json_file_path.name.startswith(("escriba_", "lista_")):
-                _parse_master_json(json_file_path, history_map_dict)
+        for json_file_path in master_files_list:
+            _parse_master_json(json_file_path, history_map_dict)
                 
         # 2. Depois processamos os arquivos avulsos (.info.json),
         # pulando os que já estão completos no banco de dados mestre para acelerar drasticamente a leitura do disco.
-        for json_file_path in json_files_list:
-            if json_file_path.name in blacklist_names_set: 
-                continue
-            if json_file_path.name.startswith(("escriba_", "lista_")):
-                continue
-                
-            match_obj: Optional[re.Match] = vid_regex_obj.search(json_file_path.name)
+        for json_file_path, entry_name in info_files_list:
+            match_obj: Optional[re.Match] = vid_regex_obj.search(entry_name)
             if match_obj:
                 video_id_str: str = match_obj.group(1)
                 existing_data: Optional[Dict[str, Any]] = history_map_dict.get(video_id_str)
