@@ -2419,10 +2419,49 @@ def _normalize_canal_arg(cli_args: argparse.Namespace) -> None:
         cli_args.canal = " ".join(cli_args.canal)
 
 
+def _process_db_for_status(db_path) -> dict:
+    import json
+    try:
+        with open(db_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        videos = data.get("videos")
+        if not isinstance(videos, list):
+            if isinstance(data, list):
+                videos = data
+                data = {}
+            else:
+                videos = []
+
+        total_videos = len(videos)
+        downloaded = sum(1 for v in videos if v.get("subtitle_downloaded"))
+        no_subtitle = sum(1 for v in videos if v.get("has_no_subtitle"))
+        pending = total_videos - downloaded - no_subtitle
+
+        return {
+            "banco_dados": db_path.name,
+            "caminho_absoluto": str(db_path.resolve()),
+            "idioma_detectado": data.get("detected_language") if isinstance(data, dict) else None,
+            "canais_youtube": data.get("youtube_channels", []) if isinstance(data, dict) else [],
+            "canais_vimeo": data.get("vimeo_channels", []) if isinstance(data, dict) else [],
+            "estatisticas": {
+                "total_videos": total_videos,
+                "baixados": downloaded,
+                "sem_legenda": no_subtitle,
+                "pendentes": pending
+            }
+        }
+    except Exception as e:
+        return {
+            "banco_dados": db_path.name,
+            "erro": str(e)
+        }
+
 def exibir_status_canais_json() -> None:
     """Localiza todos os arquivos de banco de dados escriba_*.json na pasta de trabalho e exibe suas estatísticas como JSON."""
     import json
     from pathlib import Path
+    import concurrent.futures
     
     cwd_path = Path.cwd()
     db_files = list(cwd_path.glob("escriba_*.json")) + list(cwd_path.glob("lista_*.json"))
@@ -2434,43 +2473,13 @@ def exibir_status_canais_json() -> None:
             seen.add(resolved)
             unique_dbs.append(p)
             
+    # ⚡ Bolt: Use ThreadPoolExecutor to concurrently load DBs.
+    # This prevents blocking synchronously on disk I/O for each file sequentially.
     channels_status = []
-    for db_path in unique_dbs:
-        try:
-            with open(db_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
-            videos = data.get("videos")
-            if not isinstance(videos, list):
-                if isinstance(data, list):
-                    videos = data
-                    data = {}
-                else:
-                    videos = []
-                    
-            total_videos = len(videos)
-            downloaded = sum(1 for v in videos if v.get("subtitle_downloaded"))
-            no_subtitle = sum(1 for v in videos if v.get("has_no_subtitle"))
-            pending = total_videos - downloaded - no_subtitle
-            
-            channels_status.append({
-                "banco_dados": db_path.name,
-                "caminho_absoluto": str(db_path.resolve()),
-                "idioma_detectado": data.get("detected_language") if isinstance(data, dict) else None,
-                "canais_youtube": data.get("youtube_channels", []) if isinstance(data, dict) else [],
-                "canais_vimeo": data.get("vimeo_channels", []) if isinstance(data, dict) else [],
-                "estatisticas": {
-                    "total_videos": total_videos,
-                    "baixados": downloaded,
-                    "sem_legenda": no_subtitle,
-                    "pendentes": pending
-                }
-            })
-        except Exception as e:
-            channels_status.append({
-                "banco_dados": db_path.name,
-                "erro": str(e)
-            })
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        # map guarantees results are in the same order as unique_dbs
+        results = executor.map(_process_db_for_status, unique_dbs)
+        channels_status = list(results)
             
     print(json.dumps(channels_status, indent=4, ensure_ascii=False))
 

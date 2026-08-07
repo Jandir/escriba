@@ -7,3 +7,6 @@
 ## 2026-07-09 - Avoid redundant file system calls
 **Learning:** Codebase performance pattern: Avoid redundant file system calls (like double `stat()` calls) when traversing directories. For example, instead of checking `if path.exists(): mtime = path.stat().st_mtime`, this results in two filesystem calls. The first call `exists()` does a `stat()` under the hood, and the second `stat()` call does it again. Using a `try: mtime = path.stat().st_mtime except OSError: mtime = 0.0` block reduces syscall overhead by half.
 **Action:** When accessing file metadata in loops or comprehensions, use `try...except OSError` blocks around `path.stat()` instead of checking `path.exists()` first.
+## 2025-02-21 - Parallelizing Disk I/O with ThreadPoolExecutor
+**Learning:** When dealing with N+1 query patterns involving sequential file reads in a loop (like reading multiple JSON database files), the process blocks synchronously on disk I/O. Using `concurrent.futures.ThreadPoolExecutor` and `executor.map` allows these reads to occur concurrently, drastically reducing the total blocking time and improving throughput without needing to change to async I/O.
+**Action:** Refactored the synchronous `for` loop in `escriba.py:2401` (`exibir_status_canais_json`) into a helper function and mapped it across `unique_dbs` using a `ThreadPoolExecutor`.
