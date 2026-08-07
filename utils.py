@@ -4,14 +4,23 @@ import time
 import re
 
 # Força codificação UTF-8 no console do Windows para evitar UnicodeEncodeError com emojis
-# Habilita suporte a cores ANSI no console do Windows (Virtual Terminal Processing)
+# Habilita suporte a cores ANSI no console do Windows (Virtual Terminal Processing) sem usar os.system
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")
     except Exception:
         pass
-    os.system("")
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        # STD_OUTPUT_HANDLE = -11, ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except Exception:
+        pass
 from pathlib import Path
 from typing import Optional, List, Dict
 
