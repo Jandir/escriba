@@ -10,3 +10,6 @@
 ## 2026-07-28 - Optimize directory scanning with os.scandir
 **Learning:** Codebase performance pattern: Prefer `os.scandir()` over `os.listdir()` when scanning directories if you also need file attributes like size, type, or modification time. `os.scandir()` returns `os.DirEntry` objects which cache file attributes (like `.stat().st_size`) directly from the OS directory table, thus avoiding redundant `stat()` system calls that `os.path.getsize()` or `os.path.exists()` would otherwise make.
 **Action:** When scanning directories to collect file sizes or types, replace `os.listdir()` followed by `os.path.getsize()` with a `with os.scandir() as it:` loop, checking `entry.is_file()` and accessing `entry.stat().st_size`.
+## 2026-08-16 - Optimize glob scanning to single pass with os.scandir
+**Learning:** Calling `Path.glob` multiple times or iterating over the file list multiple times while scanning directory contents can be a significant de-optimization. It repeats filename evaluation string operations and wastes CPU cycles iterating lists.
+**Action:** Use a single `os.scandir` loop to categorize lightweight `os.DirEntry` objects into specific list buckets (e.g. `master_jsons`, `info_jsons`) in a single pass to avoid redundant iteration and system overhead.

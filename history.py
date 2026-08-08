@@ -1,3 +1,4 @@
+import os
 import json
 import re
 from pathlib import Path
@@ -133,25 +134,31 @@ def _scan_directory_for_history(
     Dividido em duas etapas para garantir integridade e performance de leitura.
     """
     try:
-        json_files_list: List[Path] = list(directory_path.glob("*.json"))
+        master_jsons = []
+        info_jsons = []
+
+        # BOLT OPTIMIZATION:
+        # Using os.scandir to categorize files in a single pass is faster than Path.glob("*.json")
+        # followed by multiple .name string checks in separate loops.
+        with os.scandir(directory_path) as it:
+            for entry in it:
+                if entry.name.endswith(".json") and entry.is_file(follow_symlinks=False):
+                    if entry.name in blacklist_names_set:
+                        continue
+                    if entry.name.startswith(("escriba_", "lista_")):
+                        master_jsons.append(Path(entry.path))
+                    else:
+                        info_jsons.append((entry.name, Path(entry.path)))
         
         # 1. Primeiro processamos os bancos de dados mestre (escriba_ ou lista_)
         # Isso garante que history_map_dict já contenha a maior base de dados conhecida em memória rápida.
-        for json_file_path in json_files_list:
-            if json_file_path.name in blacklist_names_set: 
-                continue
-            if json_file_path.name.startswith(("escriba_", "lista_")):
-                _parse_master_json(json_file_path, history_map_dict)
+        for json_file_path in master_jsons:
+            _parse_master_json(json_file_path, history_map_dict)
                 
         # 2. Depois processamos os arquivos avulsos (.info.json),
         # pulando os que já estão completos no banco de dados mestre para acelerar drasticamente a leitura do disco.
-        for json_file_path in json_files_list:
-            if json_file_path.name in blacklist_names_set: 
-                continue
-            if json_file_path.name.startswith(("escriba_", "lista_")):
-                continue
-                
-            match_obj: Optional[re.Match] = vid_regex_obj.search(json_file_path.name)
+        for entry_name, json_file_path in info_jsons:
+            match_obj: Optional[re.Match] = vid_regex_obj.search(entry_name)
             if match_obj:
                 video_id_str: str = match_obj.group(1)
                 existing_data: Optional[Dict[str, Any]] = history_map_dict.get(video_id_str)
