@@ -10,3 +10,7 @@
 ## 2026-07-28 - Optimize directory scanning with os.scandir
 **Learning:** Codebase performance pattern: Prefer `os.scandir()` over `os.listdir()` when scanning directories if you also need file attributes like size, type, or modification time. `os.scandir()` returns `os.DirEntry` objects which cache file attributes (like `.stat().st_size`) directly from the OS directory table, thus avoiding redundant `stat()` system calls that `os.path.getsize()` or `os.path.exists()` would otherwise make.
 **Action:** When scanning directories to collect file sizes or types, replace `os.listdir()` followed by `os.path.getsize()` with a `with os.scandir() as it:` loop, checking `entry.is_file()` and accessing `entry.stat().st_size`.
+
+## 2024-08-10 - Regex re.DOTALL vs Native String Search
+**Learning:** For simple bounding searches in multiline strings (like finding the end of a header with `\n\n` or the boundaries of a YAML frontmatter `\n---`), using native `str.find()` combined with string slicing is significantly faster than using multi-line regular expressions like `re.sub(r"^WEBVTT.*?\n\n", "", text, flags=re.DOTALL)`.
+**Action:** Replace `re.sub` and `re.search` with native string `.find()` and slicing when extracting or stripping well-defined blocks (like headers) from the beginning of large strings to optimize parsing hot paths.
