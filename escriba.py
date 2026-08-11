@@ -954,7 +954,9 @@ def convert_vtt_to_srt(vtt_path: Path) -> Path:
     
     # Remove o cabeçalho WEBVTT
     if content.startswith("WEBVTT"):
-        content = re.sub(r"^WEBVTT.*?\n\n", "", content, flags=re.DOTALL)
+        idx = content.find("\n\n")
+        if idx != -1:
+            content = content[idx+2:]
     
     blocks = content.split("\n\n")
     srt_blocks = []

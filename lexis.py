@@ -189,9 +189,13 @@ def _extract_metadata_from_content(content_str: str) -> Dict[str, str]:
     meta_dict: Dict[str, str] = {}
     
     # 1. Tenta YAML Frontmatter (padrão mais comum nos .md do Escriba)
-    yaml_match_obj = re.search(r"^---\n(.*?)\n---", content_str, re.DOTALL | re.MULTILINE)
-    if yaml_match_obj:
-        yaml_content_str = yaml_match_obj.group(1)
+    yaml_content_str = None
+    if content_str.startswith("---\n"):
+        idx = content_str.find("\n---", 4)
+        if idx != -1:
+            yaml_content_str = content_str[4:idx]
+
+    if yaml_content_str is not None:
         # Regexes para cada campo dentro do YAML
         fields_dict = {
             "title": r"^(?:title|titulo|TITULO):\s*[\"']?(.+?)[\"']?$",
@@ -380,7 +384,16 @@ def _extract_md_transcription(md_content_str: str) -> str:
     content_str: str = md_content_str.strip()
     
     # Remove o bloco de metadados YAML (o frontmatter)
-    yaml_stripped_str: str = re.sub(r"^---\n.*?\n---\n?", "", content_str, count=1, flags=re.DOTALL).strip()
+    yaml_stripped_str = content_str
+    if content_str.startswith("---\n"):
+        idx = content_str.find("\n---\n", 4)
+        if idx != -1:
+            yaml_stripped_str = content_str[idx+5:]
+        else:
+            idx = content_str.find("\n---", 4)
+            if idx != -1:
+                yaml_stripped_str = content_str[idx+4:]
+    yaml_stripped_str = yaml_stripped_str.strip()
 
     # Tenta manter o título principal (# Título) se ele existir
     header_block_str: str = _get_md_header_block(yaml_stripped_str) or _get_md_header_block(content_str, level=2) or ""
