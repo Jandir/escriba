@@ -58,10 +58,10 @@ _NEWLINE_PATTERN = re.compile(r'\n{3,}')
 # Isso mantém a pasta principal limpa e organizada.
 ARCHIVE_DIR_NAME: str = "archive" 
 
-# Por que 1.0MB? 
-# 1.0MB (~200k tokens) é o ponto ideal (sweet spot) para o Google NotebookLM e RAG.
+# Por que 2.4MB? 
+# 2.4MB (~480k palavras) é o limite seguro do Google NotebookLM e RAG para evitar falhas de indexação (limite oficial é 500k palavras).
 # Garante alta densidade sem causar perda de precisão de busca ("Lost in the Middle").
-MAX_FILE_SIZE_MB: float = 1.0
+MAX_FILE_SIZE_MB: float = 2.4
 MAX_CHARS: int = int(MAX_FILE_SIZE_MB * 1024 * 1024) 
 
 def clean_srt_content(subtitle_content_str: str) -> str:
