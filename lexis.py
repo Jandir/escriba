@@ -632,6 +632,10 @@ def generate_volume_header(channel_name_str: str, channel_url_str: str) -> str:
     return "\n".join(header_lines_list)
 
 
+# Globally pre-compiled regexes for performance
+_YT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_VIMEO_ID_PATTERN = re.compile(r"^\d{7,12}$")
+
 # Regex globally pre-compiled for performance: matches ID:, DATA: and TITULO: pattern in volumes
 _VOLUME_METADATA_PATTERN = re.compile(
     r"ID:\s*(.*?)\nDATA:\s*(.*?)\nTITULO:\s*(.*?)\n-{" + str(60) + "}",
@@ -768,15 +772,15 @@ def _parse_volume_manifest(file_path_str: str, files_set_set: Set[str], ids_set_
                 elif line_clean_str.startswith("ID: "):
                     vid_id_str: str = line_clean_str.replace("ID: ", "")
                     if vid_id_str and vid_id_str != "Sem ID":
-                        is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
-                        is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
+                        is_youtube = _YT_ID_PATTERN.match(vid_id_str)
+                        is_vimeo = _VIMEO_ID_PATTERN.match(vid_id_str)
                         if is_youtube or is_vimeo:
                             ids_set_set.add(vid_id_str)
                 elif line_clean_str.startswith("video_id: "):
                     vid_id_str: str = line_clean_str.replace("video_id: ", "").strip('"')
                     if vid_id_str and vid_id_str != "Sem ID":
-                        is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
-                        is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
+                        is_youtube = _YT_ID_PATTERN.match(vid_id_str)
+                        is_vimeo = _VIMEO_ID_PATTERN.match(vid_id_str)
                         if is_youtube or is_vimeo:
                             ids_set_set.add(vid_id_str)
     except Exception:
