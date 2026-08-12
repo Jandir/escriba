@@ -842,19 +842,21 @@ def _get_eligible_files(channel_path_str: str, channel_name_str: str, scan_archi
     eligible_files_list: List[str] = []
     
     # 1. Busca na pasta principal
-    for f in os.listdir(channel_path_str):
-        if pattern_obj.match(f) and not vol_pattern_obj.match(f):
-            eligible_files_list.append(f)
+    with os.scandir(channel_path_str) as it:
+        for entry in it:
+            if entry.is_file() and pattern_obj.match(entry.name) and not vol_pattern_obj.match(entry.name):
+                eligible_files_list.append(entry.name)
             
     # 2. Busca nas pastas 'archive' e 'archives'
     if scan_archive_bool:
         for arch_dir in ["archive", "archives"]:
             archive_path: str = os.path.join(channel_path_str, arch_dir)
             if os.path.exists(archive_path) and os.path.isdir(archive_path):
-                for f in os.listdir(archive_path):
-                    if pattern_obj.match(f):
-                        # Mantemos o prefixo para que o processador saiba onde ler
-                        eligible_files_list.append(os.path.join(arch_dir, f))
+                with os.scandir(archive_path) as it:
+                    for entry in it:
+                        if entry.is_file() and pattern_obj.match(entry.name):
+                            # Mantemos o prefixo para que o processador saiba onde ler
+                            eligible_files_list.append(os.path.join(arch_dir, entry.name))
                 
     eligible_files_list.sort()
     return eligible_files_list
@@ -1324,10 +1326,12 @@ def _scan_for_channel_files(dir_path_str: str) -> List[str]:
     """
     dir_name_str: str = os.path.basename(os.path.abspath(dir_path_str))
     pattern_obj = re.compile(rf"^{re.escape(dir_name_str)}[-]+[A-Za-z0-9_-]{{9,15}}(?:-[a-zA-Z0-9-]+)?\.(txt|srt|md)$")
-    return [
-        f for f in os.listdir(dir_path_str) 
-        if pattern_obj.match(f)
-    ]
+    result = []
+    with os.scandir(dir_path_str) as it:
+        for entry in it:
+            if entry.is_file() and pattern_obj.match(entry.name):
+                result.append(entry.name)
+    return result
 
 
 def _has_archived_files(dir_path_str: str) -> bool:
@@ -1335,8 +1339,10 @@ def _has_archived_files(dir_path_str: str) -> bool:
     for arch_dir in ["archive", "archives"]:
         archive_path_str: str = os.path.join(dir_path_str, arch_dir)
         if os.path.exists(archive_path_str) and os.path.isdir(archive_path_str):
-            if any(f.endswith(('.txt', '.srt', '.md')) for f in os.listdir(archive_path_str)):
-                return True
+            with os.scandir(archive_path_str) as it:
+                for entry in it:
+                    if entry.is_file() and entry.name.endswith(('.txt', '.srt', '.md')):
+                        return True
     return False
 
 
@@ -1349,10 +1355,12 @@ def _process_subdirectories(base_path_str: str, reset_mode_bool: bool) -> None:
     olhar cada subpasta e, se achar transcrições lá, vai processar uma a uma.
     """
     ignore_set: Set[str] = {'archive', 'archives', 'volumes_notebooklm', '__pycache__', '.venv', '.git'}
-    subdirs_list: List[str] = [
-        d for d in os.listdir(base_path_str) 
-        if os.path.isdir(os.path.join(base_path_str, d)) and d not in ignore_set
-    ]
+    subdirs_list: List[str] = []
+    with os.scandir(base_path_str) as it:
+        for entry in it:
+            if entry.is_dir() and entry.name not in ignore_set:
+                subdirs_list.append(entry.name)
+
     for channel_name_str in sorted(subdirs_list):
         process_channel(os.path.join(base_path_str, channel_name_str), channel_name_str, reset_mode_bool=reset_mode_bool)
 

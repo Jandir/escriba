@@ -14,3 +14,6 @@
 ## 2024-08-10 - Regex re.DOTALL vs Native String Search
 **Learning:** For simple bounding searches in multiline strings (like finding the end of a header with `\n\n` or the boundaries of a YAML frontmatter `\n---`), using native `str.find()` combined with string slicing is significantly faster than using multi-line regular expressions like `re.sub(r"^WEBVTT.*?\n\n", "", text, flags=re.DOTALL)`.
 **Action:** Replace `re.sub` and `re.search` with native string `.find()` and slicing when extracting or stripping well-defined blocks (like headers) from the beginning of large strings to optimize parsing hot paths.
+## 2026-09-10 - Replace os.listdir with os.scandir to reduce I/O overhead
+**Learning:** Codebase performance pattern: Prefer `os.scandir()` over `os.listdir()` when scanning directories if you need file attributes or types to filter files. `os.scandir()` yields `os.DirEntry` objects which cache file type directly from the OS directory table, avoiding redundant `stat()` system calls that `os.path.isdir()` or `os.path.isfile()` would otherwise make.
+**Action:** When scanning directories to filter by `isdir()` or `isfile()`, replace `os.listdir()` followed by `os.path.isdir()` with a `with os.scandir() as it:` loop, checking `entry.is_dir()` or `entry.is_file()`.
