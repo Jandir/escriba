@@ -1334,9 +1334,14 @@ def _has_archived_files(dir_path_str: str) -> bool:
     """Verifica se existem arquivos na pasta de archive ou archives."""
     for arch_dir in ["archive", "archives"]:
         archive_path_str: str = os.path.join(dir_path_str, arch_dir)
-        if os.path.exists(archive_path_str) and os.path.isdir(archive_path_str):
-            if any(f.endswith(('.txt', '.srt', '.md')) for f in os.listdir(archive_path_str)):
-                return True
+        # Bolt: Performance optimization - use os.scandir to avoid extra stat() calls
+        try:
+            with os.scandir(archive_path_str) as entries:
+                for entry in entries:
+                    if entry.is_file() and entry.name.endswith(('.txt', '.srt', '.md')):
+                        return True
+        except OSError:
+            continue
     return False
 
 
@@ -1349,10 +1354,14 @@ def _process_subdirectories(base_path_str: str, reset_mode_bool: bool) -> None:
     olhar cada subpasta e, se achar transcrições lá, vai processar uma a uma.
     """
     ignore_set: Set[str] = {'archive', 'archives', 'volumes_notebooklm', '__pycache__', '.venv', '.git'}
-    subdirs_list: List[str] = [
-        d for d in os.listdir(base_path_str) 
-        if os.path.isdir(os.path.join(base_path_str, d)) and d not in ignore_set
-    ]
+    subdirs_list: List[str] = []
+
+    # Bolt: Performance optimization - use os.scandir to avoid extra stat() calls
+    with os.scandir(base_path_str) as entries:
+        for entry in entries:
+            if entry.is_dir() and entry.name not in ignore_set:
+                subdirs_list.append(entry.name)
+
     for channel_name_str in sorted(subdirs_list):
         process_channel(os.path.join(base_path_str, channel_name_str), channel_name_str, reset_mode_bool=reset_mode_bool)
 
