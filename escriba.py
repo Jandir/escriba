@@ -505,10 +505,16 @@ def _strip_rollup(text_str: str, prev_text_str: str, overlap_ratio_float: float 
     """Remove do início de 'text' a porção que já foi vista em 'prev_text'."""
     prev_tokens_list, cur_tokens_list = prev_text_str.split(), text_str.split()
     if not prev_tokens_list or not cur_tokens_list: return text_str
+
+    # BOLT OPTIMIZATION:
+    # Use zip() to iterate and compare lists simultaneously in C, avoiding index lookup overhead.
     overlap_int: int = 0
-    for i_int, token_str in enumerate(cur_tokens_list):
-        if i_int < len(prev_tokens_list) and token_str == prev_tokens_list[i_int]: overlap_int += 1
-        else: break
+    for prev_token, cur_token in zip(prev_tokens_list, cur_tokens_list):
+        if prev_token == cur_token:
+            overlap_int += 1
+        else:
+            break
+
     return " ".join(cur_tokens_list[overlap_int:])
 
 def _calc_total_seconds(pysrt_time) -> int:
@@ -701,8 +707,11 @@ def _dedup_lines(lines: list[str]) -> list[str]:
         if out:
             prev_words = [w.strip(".,!?:;\"'") for w in out[-1].lower().split()]
             cur_words  = [w.strip(".,!?:;\"'") for w in line.lower().split()]
-            min_len = min(len(prev_words), len(cur_words))
-            overlap = min_len > 0 and all(prev_words[i] == cur_words[i] for i in range(min_len))
+
+            # BOLT OPTIMIZATION:
+            # Use zip() to iterate and compare lists simultaneously in C, avoiding index lookup overhead.
+            overlap = bool(prev_words) and bool(cur_words) and all(p == c for p, c in zip(prev_words, cur_words))
+
             if overlap:
                 if len(cur_words) > len(prev_words):
                     out[-1] = line
