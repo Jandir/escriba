@@ -14,3 +14,6 @@
 ## 2024-08-10 - Regex re.DOTALL vs Native String Search
 **Learning:** For simple bounding searches in multiline strings (like finding the end of a header with `\n\n` or the boundaries of a YAML frontmatter `\n---`), using native `str.find()` combined with string slicing is significantly faster than using multi-line regular expressions like `re.sub(r"^WEBVTT.*?\n\n", "", text, flags=re.DOTALL)`.
 **Action:** Replace `re.sub` and `re.search` with native string `.find()` and slicing when extracting or stripping well-defined blocks (like headers) from the beginning of large strings to optimize parsing hot paths.
+## 2026-08-15 - Fast iterable comparison using zip()
+**Learning:** Codebase performance pattern: When comparing elements of two iterables sequentially, using the built-in `zip()` function (e.g., `all(p == c for p, c in zip(prev, cur))`) is significantly faster and more pythonic than using manual loop counters (like `enumerate()`) and index lookups (e.g., `prev[i] == cur[i] for i in range(len)`). `zip()` iterates in C, reducing Python loop overhead.
+**Action:** Replace list comprehensions or generator expressions that rely on manual index lookups across multiple iterables with the `zip()` function.
