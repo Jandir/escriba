@@ -701,8 +701,8 @@ def _dedup_lines(lines: list[str]) -> list[str]:
         if out:
             prev_words = [w.strip(".,!?:;\"'") for w in out[-1].lower().split()]
             cur_words  = [w.strip(".,!?:;\"'") for w in line.lower().split()]
-            min_len = min(len(prev_words), len(cur_words))
-            overlap = min_len > 0 and all(prev_words[i] == cur_words[i] for i in range(min_len))
+            # BOLT OPTIMIZATION: Use zip() instead of manual index lookups for faster iterable comparison.
+            overlap = bool(prev_words and cur_words) and all(p == c for p, c in zip(prev_words, cur_words))
             if overlap:
                 if len(cur_words) > len(prev_words):
                     out[-1] = line
