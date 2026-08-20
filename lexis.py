@@ -1349,10 +1349,16 @@ def _process_subdirectories(base_path_str: str, reset_mode_bool: bool) -> None:
     olhar cada subpasta e, se achar transcrições lá, vai processar uma a uma.
     """
     ignore_set: Set[str] = {'archive', 'archives', 'volumes_notebooklm', '__pycache__', '.venv', '.git'}
-    subdirs_list: List[str] = [
-        d for d in os.listdir(base_path_str) 
-        if os.path.isdir(os.path.join(base_path_str, d)) and d not in ignore_set
-    ]
+    subdirs_list: List[str] = []
+
+    # BOLT OPTIMIZATION:
+    # Use os.scandir() instead of os.listdir() + os.path.isdir() to avoid redundant stat() calls.
+    # os.scandir yields DirEntry objects with cached attributes, avoiding an extra syscall per file/folder.
+    with os.scandir(base_path_str) as it:
+        for entry in it:
+            if entry.name not in ignore_set and entry.is_dir():
+                subdirs_list.append(entry.name)
+
     for channel_name_str in sorted(subdirs_list):
         process_channel(os.path.join(base_path_str, channel_name_str), channel_name_str, reset_mode_bool=reset_mode_bool)
 
