@@ -17,3 +17,6 @@
 ## 2026-08-15 - Fast iterable comparison using zip()
 **Learning:** Codebase performance pattern: When comparing elements of two iterables sequentially, using the built-in `zip()` function (e.g., `all(p == c for p, c in zip(prev, cur))`) is significantly faster and more pythonic than using manual loop counters (like `enumerate()`) and index lookups (e.g., `prev[i] == cur[i] for i in range(len)`). `zip()` iterates in C, reducing Python loop overhead.
 **Action:** Replace list comprehensions or generator expressions that rely on manual index lookups across multiple iterables with the `zip()` function.
+## 2026-03-05 - Fast prefix matching using startswith(tuple)
+**Learning:** Codebase performance pattern: When checking if a string starts with multiple possible prefixes, passing a tuple of strings directly to `str.startswith()` (e.g., `text.startswith(("A", "B"))`) is significantly faster than using a Python-level loop or generator expression with `any()` (e.g., `any(text.startswith(q) for q in ("A", "B"))`). This avoids Python loop and generator creation overhead and leverages highly optimized C-level iteration.
+**Action:** Replace `any(text.startswith(prefix) for prefix in prefixes)` with `text.startswith(tuple_of_prefixes)` to optimize string matching in hot paths.

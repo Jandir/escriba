@@ -141,6 +141,10 @@ def _get_ekklezia_regex() -> Tuple[Optional[Pattern], Dict[str, str]]:
     return re.compile(regex_pattern_str), lookup_dict
 
 
+_ASR_NOTES_PATTERN = re.compile(r'[♪♫#]')
+_ASR_MARKERS_PATTERN = re.compile(r'\[(Música|Aplausos|Risos|Música ao fundo|Vinheta|Vinheta de abertura|Legendas pela comunidade)\]', flags=re.IGNORECASE)
+
+
 def clean_asr_artifacts(text_str: str) -> str:
     """
     Remove artefatos de áudio e marcadores sonoros automáticos ASR (ex: ♪, [Música], [Aplausos]).
@@ -148,9 +152,9 @@ def clean_asr_artifacts(text_str: str) -> str:
     if not text_str:
         return text_str
     # Remove caracteres de nota musical
-    cleaned = re.sub(r'[♪♫#]', '', text_str)
+    cleaned = _ASR_NOTES_PATTERN.sub('', text_str)
     # Remove marcadores entre colchetes típicos de ASR
-    cleaned = re.sub(r'\[(Música|Aplausos|Risos|Música ao fundo|Vinheta|Vinheta de abertura|Legendas pela comunidade)\]', '', cleaned, flags=re.IGNORECASE)
+    cleaned = _ASR_MARKERS_PATTERN.sub('', cleaned)
     # Normaliza múltiplos espaços
     return " ".join(cleaned.split())
 
@@ -174,6 +178,14 @@ def clean_ekklezia_terms(text_str: str) -> str:
     return regex_pattern_obj.sub(_replace_callback, text_str)
 
 
+_CAP_PATTERN = re.compile(r'([.!?]\s+)(\w)')
+_Q_PATTERN = re.compile(r'(^|[.!?]\s+)([^.!?]+)\.')
+_QUESTION_STARTERS = (
+    "por que", "porque", "como", "onde", "qual", "quais",
+    "quem", "quando", "quanto", "quantos", "quantas", "será que", "será"
+)
+
+
 def fix_sentence_capitalization(text_str: str) -> str:
     """
     Garante que o início do texto e palavras após pontuações finais (. ! ?) comecem com maiúscula,
@@ -193,23 +205,18 @@ def fix_sentence_capitalization(text_str: str) -> str:
     def _cap_match(m: re.Match) -> str:
         return m.group(1) + m.group(2).upper()
 
-    clean_txt = re.sub(r'([.!?]\s+)(\w)', _cap_match, clean_txt)
+    clean_txt = _CAP_PATTERN.sub(_cap_match, clean_txt)
 
     # Converte sentenças iniciando com gatilhos de pergunta e terminadas em '.' para '?'
-    question_starters = (
-        "por que", "porque", "como", "onde", "qual", "quais",
-        "quem", "quando", "quanto", "quantos", "quantas", "será que", "será"
-    )
-    
     def _q_match(m: re.Match) -> str:
         prefix = m.group(1)
         sentence = m.group(2)
-        if any(sentence.lower().startswith(q) for q in question_starters):
+        if sentence.lower().startswith(_QUESTION_STARTERS):
             return prefix + sentence + "?"
         return m.group(0)
 
     # Substitui em cada sentença do texto
-    clean_txt = re.sub(r'(^|[.!?]\s+)([^.!?]+)\.', _q_match, clean_txt)
+    clean_txt = _Q_PATTERN.sub(_q_match, clean_txt)
     return clean_txt
 
 
