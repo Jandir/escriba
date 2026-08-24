@@ -201,10 +201,11 @@ def fix_sentence_capitalization(text_str: str) -> str:
         "quem", "quando", "quanto", "quantos", "quantas", "será que", "será"
     )
     
+    # BOLT OPTIMIZATION: Use native tuple-based startswith() instead of generator expression for faster C-level iteration
     def _q_match(m: re.Match) -> str:
         prefix = m.group(1)
         sentence = m.group(2)
-        if any(sentence.lower().startswith(q) for q in question_starters):
+        if sentence.lower().startswith(question_starters):
             return prefix + sentence + "?"
         return m.group(0)
 
