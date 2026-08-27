@@ -20,3 +20,6 @@
 ## 2026-08-20 - Fast tuple-based str.startswith iteration
 **Learning:** Codebase performance pattern: When checking if a string starts with multiple possible prefixes, pass a tuple of strings directly to `str.startswith()` instead of using a Python-level loop or generator expression with `any()`. This avoids generator creation overhead and leverages highly optimized C-level iteration, making it significantly faster (e.g. ~3x faster in synthetic benchmarks).
 **Action:** Replace `any(text.startswith(q) for q in prefixes)` with `text.startswith(prefixes)` where `prefixes` is a tuple.
+## 2026-08-25 - Single loop partitioning and path concatenation
+**Learning:** Codebase performance pattern: When partitioning lists of file paths based on extensions, replacing multiple list comprehensions with a single `for` loop and `if/elif` blocks avoids redundant iterations. Additionally, instantiating `pathlib.Path` objects and using the `/` division operator for string concatenation inside tight loops creates measurable overhead; converting the base `Path` to a string once and using `os.path.join` minimizes instantiation overhead.
+**Action:** When filtering files by multiple extensions or building paths in hot loops, use a single pass loop and `os.path.join` with primitive strings instead of multiple list comprehensions and `pathlib.Path` operator overloading.
