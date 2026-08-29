@@ -20,3 +20,6 @@
 ## 2026-08-20 - Fast tuple-based str.startswith iteration
 **Learning:** Codebase performance pattern: When checking if a string starts with multiple possible prefixes, pass a tuple of strings directly to `str.startswith()` instead of using a Python-level loop or generator expression with `any()`. This avoids generator creation overhead and leverages highly optimized C-level iteration, making it significantly faster (e.g. ~3x faster in synthetic benchmarks).
 **Action:** Replace `any(text.startswith(q) for q in prefixes)` with `text.startswith(prefixes)` where `prefixes` is a tuple.
+## 2026-08-25 - Fast tuple-based str.endswith iteration
+**Learning:** Codebase performance pattern: When checking if a single string starts or ends with multiple possible prefixes/suffixes, pass a tuple of strings directly to `str.startswith()` or `str.endswith()` instead of using a Python-level loop or generator expression with `any()`. This avoids generator creation overhead. Note: This optimization does not apply when checking a list of strings against a single prefix/suffix (e.g., `any(f.endswith('.json') for f in files)`).
+**Action:** Replace `any(text.endswith(q) for q in suffixes)` with `text.endswith(suffixes)` where `suffixes` is a tuple.

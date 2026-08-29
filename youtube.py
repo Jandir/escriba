@@ -269,7 +269,7 @@ def generate_fast_list_json(
     urls_to_try = [channel_url_str]
     is_channel_base = ("@" in channel_url_str or "/channel/" in channel_url_str or "/c/" in channel_url_str)
     
-    if is_channel_base and not any(channel_url_str.rstrip("/").endswith(x) for x in ["/videos", "/streams", "/shorts", "/releases", "/playlists"]):
+    if is_channel_base and not channel_url_str.rstrip("/").endswith(("/videos", "/streams", "/shorts", "/releases", "/playlists")):
         base_url = channel_url_str.rstrip("/")
         urls_to_try = [f"{base_url}/videos", f"{base_url}/streams", f"{base_url}/shorts"]
     
