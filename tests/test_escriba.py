@@ -325,6 +325,50 @@ def test_generate_md_header_with_quotes():
     assert 'O "Novo" Vídeo' in header_str  # O H1 não deve ter escape de aspas
 
 
+def test_generate_md_header_youtube():
+    """Valida a geração de cabeçalho para um vídeo do YouTube (ID com 11 caracteres)."""
+    header = escriba.generate_md_header(
+        video_title="Aprenda Python",
+        video_id="dQw4w9WgXcQ",
+        video_date="2023-10-01",
+        duration_str="01:05:00",
+        lang_code="pt",
+        version="3.0.0"
+    )
+    header_str = "".join(header)
+    assert 'title: "Aprenda Python"' in header_str
+    assert 'video_id: "dQw4w9WgXcQ"' in header_str
+    assert 'url: "https://youtube.com/watch?v=dQw4w9WgXcQ"' in header_str
+    assert 'date: "2023-10-01"' in header_str
+    assert 'duration: "01:05:00"' in header_str
+    assert 'language: "pt"' in header_str
+    assert 'source: "Escriba v3.0.0"' in header_str
+    assert '# Aprenda Python' in header_str
+    assert '> 🔗 [https://youtube.com/watch?v=dQw4w9WgXcQ](https://youtube.com/watch?v=dQw4w9WgXcQ)' in header_str
+
+
+def test_generate_md_header_vimeo():
+    """Valida a geração de cabeçalho para um vídeo do Vimeo (ID numérico de 7 a 12 dígitos)."""
+    header = escriba.generate_md_header(
+        video_title="Vimeo Showcase",
+        video_id="123456789",
+        video_date="2023-11-15",
+        duration_str="00:45:20",
+        lang_code="en",
+        version="3.0.0"
+    )
+    header_str = "".join(header)
+    assert 'title: "Vimeo Showcase"' in header_str
+    assert 'video_id: "123456789"' in header_str
+    assert 'url: "https://vimeo.com/123456789"' in header_str
+    assert 'date: "2023-11-15"' in header_str
+    assert 'duration: "00:45:20"' in header_str
+    assert 'language: "en"' in header_str
+    assert 'source: "Escriba v3.0.0"' in header_str
+    assert '# Vimeo Showcase' in header_str
+    assert '> 🔗 [https://vimeo.com/123456789](https://vimeo.com/123456789)' in header_str
+
+
 # ─── SRT -> MD Pipeline ─────────────────────────────────────────────────────
 
 import tempfile
