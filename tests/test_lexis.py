@@ -44,6 +44,18 @@ def test_get_deduplication_start_index_no_match():
     curr_str_list: List[str] = ["X", "Y"]
     assert _get_deduplication_start_index(prev_str_list, curr_str_list) == 0
 
+def test_get_deduplication_start_index_identical():
+    """Verifica se o índice de início ignora o bloco inteiro quando são idênticos."""
+    prev_str_list: List[str] = ["A", "B"]
+    curr_str_list: List[str] = ["A", "B"]
+    assert _get_deduplication_start_index(prev_str_list, curr_str_list) == 2
+
+def test_get_deduplication_start_index_partial_overlap():
+    """Verifica se encontra sobreposição parcial correta maior que 1 item."""
+    prev_str_list: List[str] = ["X", "A", "B"]
+    curr_str_list: List[str] = ["A", "B", "C"]
+    assert _get_deduplication_start_index(prev_str_list, curr_str_list) == 2
+
 def test_clean_srt_content():
     """Verifica a limpeza de arquivos SRT para texto fluido."""
     srt_content_str: str = """1

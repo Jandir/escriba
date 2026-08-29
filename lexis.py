@@ -161,15 +161,12 @@ def _get_deduplication_start_index(prev_list_list: List[str], curr_list_list: Li
 
     Retorna o índice (int) de onde devemos começar a ler o bloco atual.
     """
-    # Caso simples: a última linha que lemos é EXATAMENTE igual à primeira deste bloco.
-    if prev_list_list and curr_list_list[0] == prev_list_list[-1]:
-        return 1
-        
-    # Caso complexo: o bloco anterior era pequeno e está todo contido no início deste novo.
-    # Exemplo: Anterior ["A", "B"], Atual ["A", "B", "C"]. Retorna 2 (pula "A" e "B").
-    if len(prev_list_list) < len(curr_list_list) and curr_list_list[:len(prev_list_list)] == prev_list_list:
-        return len(prev_list_list)
-        
+    # Busca a maior sobreposição entre o final do bloco anterior e o início do atual
+    max_overlap = min(len(prev_list_list), len(curr_list_list))
+    for i in range(max_overlap, 0, -1):
+        if prev_list_list[-i:] == curr_list_list[:i]:
+            return i
+
     # Se nada coincidir, o bloco é 100% novo. Retornamos 0.
     return 0
 
