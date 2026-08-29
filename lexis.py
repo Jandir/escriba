@@ -842,19 +842,26 @@ def _get_eligible_files(channel_path_str: str, channel_name_str: str, scan_archi
     eligible_files_list: List[str] = []
     
     # 1. Busca na pasta principal
-    for f in os.listdir(channel_path_str):
-        if pattern_obj.match(f) and not vol_pattern_obj.match(f):
-            eligible_files_list.append(f)
+    try:
+        with os.scandir(channel_path_str) as it:
+            for entry in it:
+                if entry.is_file() and pattern_obj.match(entry.name) and not vol_pattern_obj.match(entry.name):
+                    eligible_files_list.append(entry.name)
+    except FileNotFoundError:
+        pass
             
     # 2. Busca nas pastas 'archive' e 'archives'
     if scan_archive_bool:
         for arch_dir in ["archive", "archives"]:
             archive_path: str = os.path.join(channel_path_str, arch_dir)
-            if os.path.exists(archive_path) and os.path.isdir(archive_path):
-                for f in os.listdir(archive_path):
-                    if pattern_obj.match(f):
-                        # Mantemos o prefixo para que o processador saiba onde ler
-                        eligible_files_list.append(os.path.join(arch_dir, f))
+            try:
+                with os.scandir(archive_path) as it:
+                    for entry in it:
+                        if entry.is_file() and pattern_obj.match(entry.name):
+                            # Mantemos o prefixo para que o processador saiba onde ler
+                            eligible_files_list.append(os.path.join(arch_dir, entry.name))
+            except FileNotFoundError:
+                pass
                 
     eligible_files_list.sort()
     return eligible_files_list
@@ -872,11 +879,14 @@ def _reset_channel(channel_path_str: str, channel_name_str: str, paths_dict: Dic
     print_info(f"Limpando canal para reprocessamento: {channel_name_str}")
     
     # 1. Apaga os arquivos de volume (.txt) na pasta de saída
-    if os.path.exists(paths_dict["output"]):
-        vol_pattern_obj: Pattern = re.compile(rf"^{re.escape(channel_name_str)}-v\d{{3}}\.txt$")
-        for f_str in os.listdir(paths_dict["output"]):
-            if vol_pattern_obj.match(f_str):
-                os.remove(os.path.join(paths_dict["output"], f_str))
+    vol_pattern_obj: Pattern = re.compile(rf"^{re.escape(channel_name_str)}-v\d{{3}}\.txt$")
+    try:
+        with os.scandir(paths_dict["output"]) as it:
+            for entry in it:
+                if entry.is_file() and vol_pattern_obj.match(entry.name):
+                    os.remove(entry.path)
+    except FileNotFoundError:
+        pass
 
     # 2. Limpa a memória de processamento no arquivo JSON
     _clear_lexis_state(paths_dict["state"])
@@ -884,8 +894,7 @@ def _reset_channel(channel_path_str: str, channel_name_str: str, paths_dict: Dic
     # 3. Traz os arquivos originais de volta das pastas 'archive' ou 'archives'
     for arch_dir in ["archive", "archives"]:
         arch_path: str = os.path.join(channel_path_str, arch_dir)
-        if os.path.exists(arch_path) and os.path.isdir(arch_path):
-            _restore_from_archive(arch_path, channel_path_str)
+        _restore_from_archive(arch_path, channel_path_str)
 
 
 def _clear_lexis_state(state_path_str: str) -> None:
@@ -920,9 +929,14 @@ def _clear_lexis_state(state_path_str: str) -> None:
 def _restore_from_archive(archive_path_str: str, dest_path_str: str) -> None:
     """Move arquivos do archive de volta para a pasta de origem."""
     count_int: int = 0
-    for f_str in os.listdir(archive_path_str):
-        shutil.move(os.path.join(archive_path_str, f_str), os.path.join(dest_path_str, f_str))
-        count_int += 1
+    try:
+        with os.scandir(archive_path_str) as it:
+            for entry in it:
+                if entry.is_file():
+                    shutil.move(entry.path, os.path.join(dest_path_str, entry.name))
+                    count_int += 1
+    except FileNotFoundError:
+        pass
     if count_int > 0:
         print_ok(f"Restaurados {count_int} arquivos do archive.")
 
@@ -1324,19 +1338,28 @@ def _scan_for_channel_files(dir_path_str: str) -> List[str]:
     """
     dir_name_str: str = os.path.basename(os.path.abspath(dir_path_str))
     pattern_obj = re.compile(rf"^{re.escape(dir_name_str)}[-]+[A-Za-z0-9_-]{{9,15}}(?:-[a-zA-Z0-9-]+)?\.(txt|srt|md)$")
-    return [
-        f for f in os.listdir(dir_path_str) 
-        if pattern_obj.match(f)
-    ]
+    files_list: List[str] = []
+    try:
+        with os.scandir(dir_path_str) as it:
+            for entry in it:
+                if entry.is_file() and pattern_obj.match(entry.name):
+                    files_list.append(entry.name)
+    except FileNotFoundError:
+        pass
+    return files_list
 
 
 def _has_archived_files(dir_path_str: str) -> bool:
     """Verifica se existem arquivos na pasta de archive ou archives."""
     for arch_dir in ["archive", "archives"]:
         archive_path_str: str = os.path.join(dir_path_str, arch_dir)
-        if os.path.exists(archive_path_str) and os.path.isdir(archive_path_str):
-            if any(f.endswith(('.txt', '.srt', '.md')) for f in os.listdir(archive_path_str)):
-                return True
+        try:
+            with os.scandir(archive_path_str) as it:
+                for entry in it:
+                    if entry.is_file() and entry.name.endswith(('.txt', '.srt', '.md')):
+                        return True
+        except FileNotFoundError:
+            pass
     return False
 
 
