@@ -128,3 +128,20 @@ def test_enrich_metadata():
     
     assert meta_dict["title"] == "Título Global"
     assert meta_dict["date"] == "2023-12-25"
+
+
+def test_format_lexis_block_yaml_injection():
+    """Verifica se _format_lexis_block escapa aspas e barras invertidas corretamente no frontmatter YAML."""
+    text_str: str = "Conteúdo"
+    filename_str: str = "malicious\\file.md"
+    metadata_dict: Dict[str, str] = {
+        "id": "VID123\"\\",
+        "title": "Title with \"quotes\" and \\\nnewlines",
+        "date": "2024-01-01"
+    }
+
+    formatted_str: str = _format_lexis_block(text_str, filename_str, metadata_dict)
+
+    assert "file_source: \"malicious\\\\file.md\"" in formatted_str
+    assert "title: \"Title with \\\"quotes\\\" and \\\\\\nnewlines\"" in formatted_str
+    assert "video_id: \"VID123\\\"\\\\\"" in formatted_str
