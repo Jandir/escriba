@@ -235,6 +235,105 @@ def detect_language(
     return f"^{fallback_lang_str}.*"
 
 
+def _get_channel_urls_to_try(channel_url_str: str) -> List[str]:
+    """Determina a lista de URLs a serem varridas a partir da URL base do canal."""
+    urls_to_try = [channel_url_str]
+    is_channel_base = ("@" in channel_url_str or "/channel/" in channel_url_str or "/c/" in channel_url_str)
+
+    if is_channel_base and not any(channel_url_str.rstrip("/").endswith(x) for x in ["/videos", "/streams", "/shorts", "/releases", "/playlists"]):
+        base_url = channel_url_str.rstrip("/")
+        urls_to_try = [f"{base_url}/videos", f"{base_url}/streams", f"{base_url}/shorts"]
+
+    return urls_to_try
+
+
+def _parse_video_metadata(
+    video_data_dict: Dict[str, Any],
+    video_id_str: str,
+    history_dict: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Extrai e normaliza os metadados de um vídeo a partir do dicionário retornado pelo yt-dlp."""
+    raw_date_any = video_data_dict.get("upload_date") or video_data_dict.get("publish_date") or video_data_dict.get("date")
+    if not raw_date_any and history_dict:
+        publish_date_str = history_dict.get(video_id_str, {}).get("publish_date", "Desconhecida")
+    else:
+        publish_date_str = format_date(raw_date_any)
+
+    return {
+        "video_id": video_id_str,
+        "title": video_data_dict.get("title") or "N/A",
+        "publish_date": publish_date_str,
+        "subtitle_downloaded": False,
+        "info_downloaded": False,
+        "has_no_subtitle": False
+    }
+
+
+def _fetch_videos_from_url(
+    current_url: str,
+    yt_dlp_cmd_list: List[str],
+    cookie_args_list: List[str],
+    history_dict: Optional[Dict[str, Any]],
+    stop_at_ids: Optional[set],
+    videos_found_list: List[Dict[str, Any]]
+) -> bool:
+    """
+    Executa o yt-dlp para uma URL específica e processa a saída em streaming.
+    Retorna True se o processo foi interrompido antecipadamente (Smart Sync stop_reached).
+    """
+    consecutive_known_count = 0
+    MAX_CONSECUTIVE_KNOWN = 10
+
+    cmd_list: List[str] = yt_dlp_cmd_list + cookie_args_list + [
+        "--flat-playlist", "--dump-json", "--ignore-errors", "--no-warnings",
+        "--extractor-args", "youtubetab:approximate_date",
+        current_url
+    ]
+
+    try:
+        process_obj = subprocess.Popen(
+            cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8"
+        )
+
+        stop_reached = False
+        if process_obj.stdout:
+            for line_str in process_obj.stdout:
+                try:
+                    video_data_dict: Dict = json.loads(line_str.strip())
+                    video_id_str: str = video_data_dict.get("id", "")
+                    if not video_id_str:
+                        continue
+
+                    if stop_at_ids and video_id_str in stop_at_ids:
+                        consecutive_known_count += 1
+                        if consecutive_known_count >= MAX_CONSECUTIVE_KNOWN:
+                            process_obj.terminate()
+                            stop_reached = True
+                            break
+                    else:
+                        consecutive_known_count = 0
+
+                    video_meta = _parse_video_metadata(video_data_dict, video_id_str, history_dict)
+                    videos_found_list.append(video_meta)
+
+                    sys.stdout.write(f"\r{ICON_WAIT}  {BCYAN}Vídeos mapeados: {len(videos_found_list)}{RESET}")
+                    sys.stdout.flush()
+
+                except Exception:
+                    continue
+
+        process_obj.wait()
+        print()
+
+        if process_obj.returncode != 0 and not videos_found_list and not (stop_at_ids and process_obj.returncode == -15):
+            _refresh_cookies_on_error(Path.cwd(), Path(__file__).parent.resolve())
+
+        return stop_reached
+
+    except Exception as error_obj:
+        raise RuntimeError(f"Falha crítica na descoberta: {error_obj}") from error_obj
+
+
 def generate_fast_list_json(
     yt_dlp_cmd_list: List[str], 
     cookie_args_list: List[str], 
@@ -266,88 +365,25 @@ def generate_fast_list_json(
     """
     print_info(f"Fase 1: Mapeando vídeos do canal...")
     
-    urls_to_try = [channel_url_str]
-    is_channel_base = ("@" in channel_url_str or "/channel/" in channel_url_str or "/c/" in channel_url_str)
-    
-    if is_channel_base and not any(channel_url_str.rstrip("/").endswith(x) for x in ["/videos", "/streams", "/shorts", "/releases", "/playlists"]):
-        base_url = channel_url_str.rstrip("/")
-        urls_to_try = [f"{base_url}/videos", f"{base_url}/streams", f"{base_url}/shorts"]
-    
+    urls_to_try = _get_channel_urls_to_try(channel_url_str)
     videos_found_list: List[Dict[str, Any]] = []
-    stop_reached = False
     
     for current_url in urls_to_try:
-        if stop_reached:
-            break
-        consecutive_known_count = 0
-        MAX_CONSECUTIVE_KNOWN = 10  # Margem de tolerância para ignorar vídeos fixados (pinned) no topo
-        
-        cmd_list: List[str] = yt_dlp_cmd_list + cookie_args_list + [
-            "--flat-playlist", "--dump-json", "--ignore-errors", "--no-warnings", 
-            "--extractor-args", "youtubetab:approximate_date",
-            current_url
-        ]
-        
         try:
-            # Cria o subprocesso com pipe para capturar a saída padrão (stdout)
-            process_obj = subprocess.Popen(
-                cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8"
+            stop_reached = _fetch_videos_from_url(
+                current_url,
+                yt_dlp_cmd_list,
+                cookie_args_list,
+                history_dict,
+                stop_at_ids,
+                videos_found_list
             )
-            
-            if process_obj.stdout:
-                # Lê a saída em streaming linha por linha
-                for line_str in process_obj.stdout:
-                    try:
-                        video_data_dict: Dict = json.loads(line_str.strip())
-                        video_id_str: str = video_data_dict.get("id", "")
-                        if not video_id_str: 
-                            continue
-                        
-                        # Smart Sync check
-                        if stop_at_ids and video_id_str in stop_at_ids:
-                            consecutive_known_count += 1
-                            if consecutive_known_count >= MAX_CONSECUTIVE_KNOWN:
-                                # Matamos o processo filho para interromper a listagem de vídeos antigos
-                                process_obj.terminate()
-                                stop_reached = True
-                                break
-                        else:
-                            consecutive_known_count = 0
-
-                        raw_date_any = video_data_dict.get("upload_date") or video_data_dict.get("publish_date") or video_data_dict.get("date")
-                        if not raw_date_any and history_dict:
-                            publish_date_str = history_dict.get(video_id_str, {}).get("publish_date", "Desconhecida")
-                        else:
-                            publish_date_str = format_date(raw_date_any)
-                        
-                        videos_found_list.append({
-                            "video_id": video_id_str,
-                            "title": video_data_dict.get("title") or "N/A",
-                            "publish_date": publish_date_str,
-                            "subtitle_downloaded": False,
-                            "info_downloaded": False,
-                            "has_no_subtitle": False
-                        })
-                        
-                        # Reescreve o contador na mesma linha usando Carriage Return (\r)
-                        sys.stdout.write(f"\r{ICON_WAIT}  {BCYAN}Vídeos mapeados: {len(videos_found_list)}{RESET}")
-                        sys.stdout.flush()
-                        
-                    except Exception:
-                        continue
-            
-            # Aguarda a finalização definitiva do subprocesso para liberar recursos do SO
-            process_obj.wait()
-            print()  # Quebra de linha após o término do contador
-            
-            # Se o yt-dlp retornou erro (diferente de 0) e não baixou nada, pode ser problema com cookies
-            if process_obj.returncode != 0 and not videos_found_list and not (stop_at_ids and process_obj.returncode == -15):
-                _refresh_cookies_on_error(Path.cwd(), Path(__file__).parent.resolve())
-            
-        except Exception as error_obj:
-            print_err(f"Falha crítica na descoberta: {error_obj}")
+            if stop_reached:
+                break
+        except RuntimeError as e:
+            print_err(str(e))
             return []
-    
+
     return videos_found_list
 
 
