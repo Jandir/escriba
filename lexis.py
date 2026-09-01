@@ -1035,10 +1035,11 @@ def _get_ext_priority(filename_str: str) -> int:
 
 def _archive_files(source_dir_path_str: str, archive_dir_path_str: str, files_list_list: List[str]) -> None:
     """Move arquivos para a pasta 'archive' para manter a pasta principal limpa."""
+    # BOLT OPTIMIZATION: Precompute tuple for native C-level startswith iteration and avoid redundant concatenations
+    archive_prefixes_tuple = ("archive" + os.sep, "archive/", "archives" + os.sep, "archives/")
     for f_str in files_list_list:
         # Se o arquivo já está em uma pasta de archive (prefixo detectado), não precisamos mover
-        if f_str.startswith("archive" + os.sep) or f_str.startswith("archive/") or \
-           f_str.startswith("archives" + os.sep) or f_str.startswith("archives/"):
+        if f_str.startswith(archive_prefixes_tuple):
             continue
         src_p_str: str = os.path.join(source_dir_path_str, f_str)
         dst_p_str: str = os.path.join(archive_dir_path_str, f_str)
