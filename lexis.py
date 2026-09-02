@@ -447,14 +447,27 @@ def _format_lexis_block(text_str: str, filename_str: str, metadata_dict: Dict[st
             ""
         ]
 
+    def yaml_escape(val: str) -> str:
+        val = val.replace("\\", "\\\\")
+        val = val.replace("\n", "\\n")
+        val = val.replace("\r", "\\r")
+        val = val.replace('"', '\\"')
+        return val
+
+    yaml_title = yaml_escape(title_str)
+    yaml_video_id = yaml_escape(video_id_str)
+    yaml_url = yaml_escape(url_str)
+    yaml_date = yaml_escape(date_str)
+    yaml_filename = yaml_escape(filename_str)
+
     lines_list: List[str] = [
         "\n<article class=\"video-entry\">",
         "---",
-        f"title: \"{title_str}\"",
-        f"video_id: \"{video_id_str}\"",
-        f"url: \"{url_str}\"",
-        f"date: \"{date_str}\"",
-        f"file_source: \"{filename_str}\"",
+        f"title: \"{yaml_title}\"",
+        f"video_id: \"{yaml_video_id}\"",
+        f"url: \"{yaml_url}\"",
+        f"date: \"{yaml_date}\"",
+        f"file_source: \"{yaml_filename}\"",
         "---",
         ""
     ] + header_prefix_lines + [
