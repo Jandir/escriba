@@ -20,3 +20,7 @@
 ## 2026-08-20 - Fast tuple-based str.startswith iteration
 **Learning:** Codebase performance pattern: When checking if a string starts with multiple possible prefixes, pass a tuple of strings directly to `str.startswith()` instead of using a Python-level loop or generator expression with `any()`. This avoids generator creation overhead and leverages highly optimized C-level iteration, making it significantly faster (e.g. ~3x faster in synthetic benchmarks).
 **Action:** Replace `any(text.startswith(q) for q in prefixes)` with `text.startswith(prefixes)` where `prefixes` is a tuple.
+
+## 2026-09-04 - Pre-compile Regexes in Hot Paths
+**Learning:** Object instantiation overhead from parsing and compiling regular expressions inside frequently called text processing functions causes a measurable bottleneck, even if they hit Python's internal cache.
+**Action:** Extract inline `re.sub` and `re.search` patterns into pre-compiled global regex objects (e.g. `re.compile()`) at module level to move compilation overhead to import time, yielding significant speedups on string substitution operations during hot paths.
