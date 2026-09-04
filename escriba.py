@@ -665,8 +665,9 @@ def _strip_rollup(text_str: str, prev_text_str: str, overlap_ratio_float: float 
     if not prev_tokens_list or not cur_tokens_list:
         return text_str
     overlap_int: int = 0
-    for i_int, token_str in enumerate(cur_tokens_list):
-        if i_int < len(prev_tokens_list) and token_str == prev_tokens_list[i_int]:
+    # Bolt: Replaced enumerate and index lookup with zip for faster C-level iteration
+    for cur_token, prev_token in zip(cur_tokens_list, prev_tokens_list):
+        if cur_token == prev_token:
             overlap_int += 1
         else:
             break
