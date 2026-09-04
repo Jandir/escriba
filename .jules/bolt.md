@@ -20,3 +20,6 @@
 ## 2026-08-20 - Fast tuple-based str.startswith iteration
 **Learning:** Codebase performance pattern: When checking if a string starts with multiple possible prefixes, pass a tuple of strings directly to `str.startswith()` instead of using a Python-level loop or generator expression with `any()`. This avoids generator creation overhead and leverages highly optimized C-level iteration, making it significantly faster (e.g. ~3x faster in synthetic benchmarks).
 **Action:** Replace `any(text.startswith(q) for q in prefixes)` with `text.startswith(prefixes)` where `prefixes` is a tuple.
+## 2025-02-12 - Optimize simultaneous iteration with `zip`
+**Learning:** When comparing elements of two lists simultaneously (e.g. for finding prefix overlap), using `zip(list1, list2)` is significantly faster than using an `enumerate()` loop with manual list indexing and length checks. This is because `zip` iterates and stops at the shortest list natively in C, avoiding Python-level boundary checks and index lookups inside tight loops.
+**Action:** Default to `zip` instead of manual index management when processing dual iterables in hot paths.
