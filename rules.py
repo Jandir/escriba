@@ -141,6 +141,14 @@ def _get_ekklezia_regex() -> Tuple[Optional[Pattern], Dict[str, str]]:
     return re.compile(regex_pattern_str), lookup_dict
 
 
+# Pre-compiled regexes for hot-path optimization
+_MUSICAL_CHARS_RE = re.compile(r'[♪♫#]')
+_ASR_MARKERS_RE = re.compile(r'\[(Música|Aplausos|Risos|Música ao fundo|Vinheta|Vinheta de abertura|Legendas pela comunidade)\]', flags=re.IGNORECASE)
+_CAP_PUNCTUATION_RE = re.compile(r'([.!?]\s+)(\w)')
+_QUESTION_SENTENCE_RE = re.compile(r'(^|[.!?]\s+)([^.!?]+)\.')
+_END_PUNCTUATION_RE = re.compile(r'[.!?\x3a\x3b,]$')
+
+
 def clean_asr_artifacts(text_str: str) -> str:
     """
     Remove artefatos de áudio e marcadores sonoros automáticos ASR (ex: ♪, [Música], [Aplausos]).
@@ -148,9 +156,9 @@ def clean_asr_artifacts(text_str: str) -> str:
     if not text_str:
         return text_str
     # Remove caracteres de nota musical
-    cleaned = re.sub(r'[♪♫#]', '', text_str)
+    cleaned = _MUSICAL_CHARS_RE.sub('', text_str)
     # Remove marcadores entre colchetes típicos de ASR
-    cleaned = re.sub(r'\[(Música|Aplausos|Risos|Música ao fundo|Vinheta|Vinheta de abertura|Legendas pela comunidade)\]', '', cleaned, flags=re.IGNORECASE)
+    cleaned = _ASR_MARKERS_RE.sub('', cleaned)
     # Normaliza múltiplos espaços
     return " ".join(cleaned.split())
 
@@ -193,7 +201,7 @@ def fix_sentence_capitalization(text_str: str) -> str:
     def _cap_match(m: re.Match) -> str:
         return m.group(1) + m.group(2).upper()
 
-    clean_txt = re.sub(r'([.!?]\s+)(\w)', _cap_match, clean_txt)
+    clean_txt = _CAP_PUNCTUATION_RE.sub(_cap_match, clean_txt)
 
     # Converte sentenças iniciando com gatilhos de pergunta e terminadas em '.' para '?'
     question_starters = (
@@ -210,7 +218,7 @@ def fix_sentence_capitalization(text_str: str) -> str:
         return m.group(0)
 
     # Substitui em cada sentença do texto
-    clean_txt = re.sub(r'(^|[.!?]\s+)([^.!?]+)\.', _q_match, clean_txt)
+    clean_txt = _QUESTION_SENTENCE_RE.sub(_q_match, clean_txt)
     return clean_txt
 
 
@@ -227,7 +235,7 @@ def restore_punctuation_heuristics(text_str: str, pause_after_seconds: float = 0
         return text_str
 
     # Se o texto não termina com pontuação (. ! ? , ; :)
-    if not re.search(r'[.!?\x3a\x3b,]$', clean_txt):
+    if not _END_PUNCTUATION_RE.search(clean_txt):
         if is_last_segment or pause_after_seconds >= 0.4:
             clean_txt += "."
         elif pause_after_seconds >= 0.15:
