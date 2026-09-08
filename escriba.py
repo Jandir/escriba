@@ -167,6 +167,7 @@ DEFAULT_THRESHOLD = 0.3
 # Regex para detecção de IDs de vídeo
 VIDEO_ID_REGEX_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 VIMEO_ID_REGEX_PATTERN = re.compile(r"^\d{7,12}$")
+_HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 
 # Carrega variáveis do .env (localizado no diretório do script)
 load_dotenv(Path(__file__).parent / ".env")
@@ -726,7 +727,7 @@ def create_adaptive_windows(
     total_subs_int: int = len(subs_list)
 
     for i_int, sub_obj in enumerate(subs_list):
-        raw_text_str: str = re.sub(r"<[^>]+>", "", sub_obj.text.replace("\n", " ")).strip()
+        raw_text_str: str = _HTML_TAG_PATTERN.sub("", sub_obj.text.replace("\n", " ")).strip()
         clean_text_str: str = _strip_rollup(raw_text_str, prev_sub_text_str)
         if clean_text_str:
             prev_sub_text_str = raw_text_str
@@ -968,7 +969,7 @@ def _process_sub_into_para(
     clean_texts: dict[int, str] | None = None,
 ) -> tuple[Any, list[str]]:
     """Processa uma única legenda dentro de um parágrafo."""
-    sub_text_str = (clean_texts or {}).get(id(sub)) or re.sub(r"<[^>]+>", "", sub.text.replace("\n", " ")).strip()
+    sub_text_str = (clean_texts or {}).get(id(sub)) or _HTML_TAG_PATTERN.sub("", sub.text.replace("\n", " ")).strip()
     sub_text_str = " ".join(sub_text_str.split())
     if not sub_text_str:
         return para_start_time, para_lines_list
