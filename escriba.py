@@ -161,7 +161,7 @@ from youtube import configure_cookies, filter_youtube_cookies
 
 
 # ─── Constantes Globais ──────────────────────────────────────────────────────
-VERSION = "2.8.0"
+VERSION = "2.8.1"
 DEFAULT_THRESHOLD = 0.3
 
 # Regex para detecção de IDs de vídeo
@@ -741,7 +741,8 @@ def create_adaptive_windows(
             clean_texts[id(sub_obj)] = punct_text_str
             current_window_subs_list.append(sub_obj)
 
-        if (sub_obj.end - start_time_obj).seconds > window_size_s_int and current_window_subs_list:
+        elapsed_window_s = _calc_total_seconds(sub_obj.end) - _calc_total_seconds(start_time_obj)
+        if elapsed_window_s > window_size_s_int and current_window_subs_list:
             w_text_str: str = " ".join(clean_texts.get(id(s), "") for s in current_window_subs_list)
             if w_text_str:
                 windows_list.append({
@@ -948,7 +949,8 @@ def _init_md_processing(srt_path: Path, indentation_prefix: str) -> tuple[Any, A
 
 def _setup_vectorizer(srt_path_name: str, windows: list[dict[str, Any]]) -> tuple[Any, Any, str, frozenset[str]]:
     """Configura o vetorizador TF-IDF com base no idioma."""
-    lang_match = re.search(r"[\.\-]([a-z]{2}(?:-[a-z]{2,3})?)\.srt$", srt_path_name, re.IGNORECASE)
+    clean_name = re.sub(r"[\.\-]orig(?=\.srt$)", "", srt_path_name, flags=re.IGNORECASE)
+    lang_match = re.search(r"[\.\-]([a-z]{2}(?:-[a-z]{2,3})?)\.srt$", clean_name, re.IGNORECASE)
     lang_code_str = lang_match.group(1).lower() if lang_match else "pt"
     oral_stopwords = get_merged_stopwords(lang_code_str)
 
@@ -975,7 +977,7 @@ def _process_sub_into_para(
     if para_start_time is None:
         para_start_time = sub.start
     para_lines_list.append(sub_text_str)
-    elapsed_int = (sub.end - para_start_time).seconds
+    elapsed_int = _calc_total_seconds(sub.end) - _calc_total_seconds(para_start_time)
     if (elapsed_int >= 60 and sentence_end_re.search(sub_text_str)) or elapsed_int >= 120:
         _flush_paragraph(_dedup_lines(para_lines_list), _smart_ts(para_start_time), md_lines)
         return None, []
@@ -1053,7 +1055,8 @@ def _run_md_segmentation(
     cosine_sim_func: Callable,
 ) -> tuple[list[tuple[str, int, list[dict[str, Any]]]] | None, Any, Any, str | None, frozenset[str] | None, dict[int, str] | None]:
     """Executa a segmentação por tópicos das janelas de legenda."""
-    win_size_int, adapt_thresh_float, _ = get_adaptive_config(_calc_total_seconds(subs_list[-1].end))
+    total_dur_s = _calc_total_seconds(subs_list[-1].end)
+    win_size_int, adapt_thresh_float, min_segs_int = get_adaptive_config(total_dur_s)
     result = create_adaptive_windows(subs_list, win_size_int)
     if not result:
         return None, None, None, None, None, None
@@ -1061,7 +1064,12 @@ def _run_md_segmentation(
     if not windows_list:
         return None, None, None, None, None, None
     vec, tfidf_mat, lang_str, stops = _setup_vectorizer(srt_path_name, windows_list)
-    breaks = detect_topic_breaks(tfidf_mat, adapt_thresh_float, cosine_sim_func)
+    breaks = detect_topic_breaks(tfidf_mat, adapt_thresh_float, cosine_sim_func, min_segs=min_segs_int)
+    # Safety Net: se um vídeo longo (>= 15 min) tiver janelas suficientes mas gerou apenas 1 quebra
+    if total_dur_s >= 900 and len(breaks) <= 1 and len(windows_list) >= min_segs_int:
+        step_wins = len(windows_list) // min_segs_int
+        for s_idx in range(1, min_segs_int):
+            breaks.add(s_idx * step_wins)
     segs_list = assemble_segments(windows_list, breaks)
     return segs_list, vec, tfidf_mat, lang_str, stops, clean_texts
 
