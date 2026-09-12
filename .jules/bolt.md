@@ -30,3 +30,6 @@
 ## 2026-10-27 - Pre-compile Regex for str.replace Alternatives
 **Learning:** Even simple regex replacements like `re.sub(r"<[^>]+>", "", text)` when called continuously inside inner loops (like stripping HTML from every line of a subtitle file) suffer from `re` module cache lookup overhead. Pre-compiling to a global `_HTML_TAG_PATTERN` avoids this entirely.
 **Action:** Always extract and globally pre-compile `re.sub` patterns that are executed inside tight text-processing loops (NLP hot paths) rather than using the inline `re.sub()` function.
+## 2026-08-20 - Fast file path categorization and concatenation
+**Learning:** Instantiating `pathlib.Path` objects and concatenating paths using the `/` operator inside a tight loop with redundant iterations adds measurable performance overhead. When partitioning lists of file paths based on extensions, replacing multiple list comprehensions containing pathlib `/` division with a single `for` loop and `os.path.join` avoids redundant iterations and minimizes object instantiation overhead, yielding significant speedups.
+**Action:** When scanning a directory to categorize files based on string suffixes, use a single `for` loop with `if/elif` blocks and convert the base `Path` to a string once before the loop to use `os.path.join(base_str, f)`.
