@@ -23,3 +23,10 @@
 ## 2025-02-12 - Optimize simultaneous iteration with `zip`
 **Learning:** When comparing elements of two lists simultaneously (e.g. for finding prefix overlap), using `zip(list1, list2)` is significantly faster than using an `enumerate()` loop with manual list indexing and length checks. This is because `zip` iterates and stops at the shortest list natively in C, avoiding Python-level boundary checks and index lookups inside tight loops.
 **Action:** Default to `zip` instead of manual index management when processing dual iterables in hot paths.
+
+## 2026-09-08 - Pre-compile Regex in NLP hot paths
+**Learning:** Python's `re` module caches compiled regex patterns internally. However, calling functions like `re.sub()` or `re.search()` with inline string patterns repeatedly still incurs significant overhead from cache lookups in tight loops (e.g. text normalization over thousands of subtitle blocks).
+**Action:** Always pre-compile `re` module regexes globally for text-processing hot paths to bypass internal cache lookups.
+## 2026-10-27 - Pre-compile Regex for str.replace Alternatives
+**Learning:** Even simple regex replacements like `re.sub(r"<[^>]+>", "", text)` when called continuously inside inner loops (like stripping HTML from every line of a subtitle file) suffer from `re` module cache lookup overhead. Pre-compiling to a global `_HTML_TAG_PATTERN` avoids this entirely.
+**Action:** Always extract and globally pre-compile `re.sub` patterns that are executed inside tight text-processing loops (NLP hot paths) rather than using the inline `re.sub()` function.

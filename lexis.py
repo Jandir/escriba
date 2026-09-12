@@ -53,6 +53,7 @@ from utils import print_ok, print_err, print_warn, print_info, print_section, ex
 # Global pre-compiled regular expressions for repeated parsing.
 _NOISE_PATTERN = re.compile(r'\[(?:Pulo de tempo|Intervalo|Gap|Pulo):?.*?\]', flags=re.IGNORECASE)
 _NEWLINE_PATTERN = re.compile(r'\n{3,}')
+_HTML_TAGS_PATTERN = re.compile(r'<[^>]*>')
 
 # Nome da pasta onde guardamos os arquivos originais após o processamento.
 # Isso mantém a pasta principal limpa e organizada.
@@ -127,7 +128,7 @@ def _process_subtitle_block(raw_text_str: str, subtitle_blocks_list: List[List[s
     Esta função garante que guardamos apenas a parte inédita de cada bloco.
     """
     # Remove qualquer tag entre < > (como <font color="white">) usando Regex simples
-    clean_text_str: str = re.sub(r'<[^>]*>', '', raw_text_str)
+    clean_text_str: str = _HTML_TAGS_PATTERN.sub('', raw_text_str)
     
     # Divide o texto em linhas e remove espaços inúteis nas pontas.
     # Usamos list comprehension para ser mais pythônico e performático.
