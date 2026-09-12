@@ -1820,8 +1820,16 @@ def _check_disk_files(
     """Verifica se arquivos SRT/MD já existem no disco."""
     if session_config.disk_files_cache is not None:
         files_for_this_video = session_config.disk_files_cache.get(video_id_str, [])
-        srt_list = [str(session_config.cwd_path / f) for f in files_for_this_video if f.endswith(".srt")]
-        md_list = [str(session_config.cwd_path / f) for f in files_for_this_video if f.endswith(".md")]
+        srt_list = []
+        md_list = []
+        # BOLT OPTIMIZATION: Use a single for-loop and string concatenation (os.path.join)
+        # instead of multiple list comprehensions and Path instantiation to improve speed.
+        base_path_str = str(session_config.cwd_path)
+        for f in files_for_this_video:
+            if f.endswith(".srt"):
+                srt_list.append(os.path.join(base_path_str, f))
+            elif f.endswith(".md"):
+                md_list.append(os.path.join(base_path_str, f))
     else:
         base_name = f"{session_config.channel_dir_name}-{video_id_str}"
         srt_list = glob.glob(str(session_config.cwd_path / f"{base_name}*.srt"))
