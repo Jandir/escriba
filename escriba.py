@@ -1614,11 +1614,15 @@ def _warm_up_cookies(session_config: SessionConfig, cookie_args_list: list[str])
     cookies_txt_path = session_config.cwd_path / "cookies.txt"
     if not cookies_txt_path.is_file():
         print_warn(f"Executando warm-up para extrair cookies do {session_config.browser_name.capitalize()} silenciosamente...")
-        subprocess.run(
-            session_config.yt_dlp_cmd_list + cookie_args_list + ["--dump-json", "--playlist-items", "0", session_config.channel_url],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        try:
+            subprocess.run(
+                session_config.yt_dlp_cmd_list + cookie_args_list + ["--dump-json", "--playlist-items", "0", session_config.channel_url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=60,
+            )
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as error_obj:
+            print_warn(f"Falha ao executar warm-up de cookies: {error_obj}")
 
     if cookies_txt_path.is_file():
         if session_config.provider == "vimeo":
