@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Versão-2.8.0-blue?style=for-the-badge" alt="Versão">
+  <img src="https://img.shields.io/badge/Versão-2.8.1-blue?style=for-the-badge" alt="Versão">
   <img src="https://img.shields.io/badge/Python-3.14+-ffd343?style=for-the-badge&logo=python&logoColor=black" alt="Python">
   <img src="https://img.shields.io/badge/Performance-Bolt_Engine-FF6B6B?style=for-the-badge&logo=lightning&logoColor=white" alt="Performance">
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
@@ -16,7 +16,7 @@
 
 **Escriba** é um pipeline de extração, tratamento sintático-semântico e estruturação de dados não estruturados de vídeo para bases de conhecimento (**Google NotebookLM**, bancos vetoriais RAG e **Notion**).
 
-Diferente de simples baixadores de legenda, o **Escriba v2.8.0** atua como um **Escriba Digital de Nível Editorial**: ele higieniza o texto bruto de voz (ASR), restaura a pontuação gramatical e maiúsculas localmente, deduplica *roll-ups* e segmenta os temas em capítulos lógicos, entregando documentos Markdown de altíssima fidelidade com máxima eficiência computacional.
+Diferente de simples baixadores de legenda, o **Escriba v2.8.1** atua como um **Escriba Digital de Nível Editorial**: ele higieniza o texto bruto de voz (ASR), restaura a pontuação gramatical e maiúsculas localmente, deduplica *roll-ups* e segmenta os temas em capítulos lógicos, entregando documentos Markdown de altíssima fidelidade com máxima eficiência computacional.
 
 O output final é uma base de conhecimento hiper-estruturada, pronta para:
 * Alimentar assistentes de IA generativa (como o **Google NotebookLM**) sem alucinações por falta de pontuação ou vazamento de contexto.
@@ -44,9 +44,11 @@ O **Escriba** resolve esse problema através de um tratamento multicamadas:
      - Frases com gatilhos interrogativos (*"por que"*, *"como"*, *"onde"*, *"será que"*) $\rightarrow$ Fechamento com **Ponto de Interrogação (`?`)**.
    - **100% Local**: Funciona na máquina sem depender de chamadas pagas a LLMs remotos ou latência de rede.
 
-2. **📌 Garantia de Divisão por Capítulos (`##` e `###`)**:
+2. **📌 Garantia de Divisão por Capítulos (`##` e `###`) e Vídeos Longos**:
    - Detecta os vales de similaridade de cosseno (TF-IDF) no vocabulário do orador.
-   - Garante que todo vídeo possua uma estrutura hierárquica clara (`# Título` $\rightarrow$ `## Sumário` $\rightarrow$ `## Transcrição por Capítulos` $\rightarrow$ `### [timestamp] Tópico`), dividindo o vídeo em pelo menos 3 a 8 capítulos semânticos.
+   - Suporte pleno a vídeos longos ($\ge 30\text{ min}$, $1\text{h}+$): cálculo temporal absoluto que assegura divisão adaptativa (3 a 8 capítulos) e quebras periódicas de parágrafos a cada 1-2 minutos.
+   - Suporte nativo a legendas automáticas com sufixo `-orig` (ex: `.en-orig.srt`), mantendo a detecção correta de idioma e vocabulário de *stopwords*.
+   - Garante que todo vídeo possua uma estrutura hierárquica clara (`# Título` $\rightarrow$ `## Sumário` $\rightarrow$ `## Transcrição por Capítulos` $\rightarrow$ `### [timestamp] Tópico`).
 
 3. **📦 Consolidação de Volumes para NotebookLM (Motor Lexis)**:
    - Respeita o limite ideal de **2.4MB por volume (~500k tokens)** otimizado para a janela de contexto do Google NotebookLM.
@@ -123,7 +125,7 @@ Mapear e catalogar conteúdo de vídeo manualmente é um gargalo operacional. O 
 *   **🛠️ Auto-Healing de Autenticação**: Detecta cookies inválidos, regenera o cache e continua o download sem interrupções.
 *   **✍️ Punctuation & Syntax Restoration**: Restauração local e automática de pontuação gramatical e maiúsculas baseada nas pausas da fala.
 *   **🧠 Motor de NLP com Vales de Cosseno**: Garantia de divisão em capítulos baseada no vocabulário do orador, evitando documentos monolíticos.
-*   **📚 Consolidação Lexis v2.8.0**: Encapsulamento em `<article>` com Frontmatter YAML e limite otimizado de 2.4MB por volume.
+*   **📚 Consolidação Lexis v2.8.1**: Encapsulamento em `<article>` com Frontmatter YAML e limite otimizado de 2.4MB por volume.
 *   **📁 Repositório Único Inteligente**: Banco de dados JSON amarrado ao nome da pasta (`escriba_[folder_name].json`), com migração e consolidação automática.
 *   **🎙️ Fallback de Áudio**: Extração automática de áudio bruto (`.mp3`/`.m4a`) caso o vídeo não possua legendas.
 
@@ -134,14 +136,15 @@ Mapear e catalogar conteúdo de vídeo manualmente é um gargalo operacional. O 
 ```mermaid
 graph LR
     A[YouTube / Vimeo / Video] --> B{Pipeline Escriba}
-    subgraph B [Tratamento Escriba v2.8.0]
+    subgraph B [Tratamento Escriba v2.8.1]
         B1[Extração & Cookies Seguros]
         B2[Higienização & Pontuação Local]
         B3[Deduplicação de Roll-ups via C]
         B4[Capítulos via Vales TF-IDF]
     end
     B --> C[Markdown Otimizado]
-    C --> D{Motor Lexis}
+    D{Motor Lexis}
+    C --> D
     D --> E[Volumes 2.4MB em <article>]
     E --> F[(Google NotebookLM / RAG / Notion)]
 ```
@@ -156,6 +159,7 @@ graph LR
 *   `history.py`: Gestão de estado atômico e persistência JSON.
 *   `utils.py`: Sistema de design CLI e utilitários auxiliares.
 *   `convert_all_bases.py`: Utilitário de migração e conversão massiva de diretórios e bases históricas.
+*   `reprocessar_md_monoliticos.py`: Utilitário para reestruturar e segmentar arquivos `.md` monolíticos pré-existentes.
 
 ---
 
@@ -224,6 +228,9 @@ escriba @CanalExemplo --consolidar --lexis-reset
 
 # Modo Offline: Regenerar todos os .md a partir do cache local de .srt
 escriba --regen-md
+
+# Reestruturação direta de arquivos .md monolíticos pré-existentes
+python reprocessar_md_monoliticos.py [caminho_da_pasta_ou_arquivo]
 
 # Conversão massiva de todas as bases locais
 python convert_all_bases.py

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-convert_all_bases.py (Escriba v2.8.0)
+convert_all_bases.py (Escriba v2.8.1)
 ─────────────────────────────────────────────────────────────────────────────
 Script de conversão e atualização massiva para todas as bases e canais.
 
@@ -8,7 +8,7 @@ O que este script faz:
   1. Varre automaticamente diretórios de downloads (ex: ~/Documents/youtubedownloads
      e pastas locais) identificando todas as pastas de canais ativas.
   2. Regenera todos os arquivos .md a partir das legendas .srt aplicando o
-     motor v2.8.0:
+     motor v2.8.1:
        - Restauração Local de Pontuação Gramatical (., ,, ? e maiúsculas).
        - Garantia de Divisão por Capítulos (mínimo de 3 a 8 capítulos via vales TF-IDF).
        - Hierarquia estrita Markdown H1 -> H2 -> H3.
@@ -94,7 +94,7 @@ def process_single_channel_directory(channel_dir: Path):
         except Exception as e:
             print_warn(f"Falha ao re-converter {srt_path.name}: {e}")
 
-    print_ok(f"{converted_md_count} arquivos .md atualizados com pontuação v2.8.0 e capítulos.")
+    print_ok(f"{converted_md_count} arquivos .md atualizados com pontuação v2.8.1 e capítulos.")
 
     # 2. Re-executar o Lexis com --reset para regerar os volumes NotebookLM
     print_info(f"Re-gerando volumes NotebookLM (1.0MB) para {channel_name}...")
@@ -107,7 +107,7 @@ def process_single_channel_directory(channel_dir: Path):
 
 def main():
     print_header(VERSION)
-    print_info("Script de Conversão Massiva v2.8.0 - Escriba & Lexis")
+    print_info("Script de Conversão Massiva v2.8.1 - Escriba & Lexis")
 
     target_paths = DEFAULT_SEARCH_PATHS
     if len(sys.argv) > 1:

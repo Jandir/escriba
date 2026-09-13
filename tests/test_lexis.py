@@ -15,7 +15,8 @@ from lexis import (
     _process_subtitle_block,
     _parse_volume_manifest,
     _format_lexis_block,
-    _enrich_metadata
+    _enrich_metadata,
+    resolve_channel_identity,
 )
 
 # EXPLICAÇÃO PARA JUNIORES:
@@ -128,3 +129,45 @@ def test_enrich_metadata():
     
     assert meta_dict["title"] == "Título Global"
     assert meta_dict["date"] == "2023-12-25"
+
+
+def test_resolve_channel_identity_with_channel_context(tmp_path):
+    """Verifica se resolve_channel_identity prioriza channel_context do JSON."""
+    import json
+    state_file = tmp_path / "escriba_michaelheiser.json"
+    data = {
+        "folder_repository": "michaelheiser",
+        "youtube_channels": ["@DRMSH"],
+        "channel_context": "@DRMSH",
+        "youtube_channel": "https://www.youtube.com/@DRMSH",
+    }
+    state_file.write_text(json.dumps(data), encoding="utf-8")
+
+    name, url = resolve_channel_identity(str(state_file), "michaelheiser")
+    assert name == "@DRMSH"
+    assert url == "https://www.youtube.com/@DRMSH"
+
+
+def test_resolve_channel_identity_with_source_channel_in_videos(tmp_path):
+    """Verifica se resolve_channel_identity obtém canal de source_channel se não houver context."""
+    import json
+    state_file = tmp_path / "escriba_meucanal.json"
+    data = {
+        "videos": [
+            {"video_id": "ABC12345678", "source_channel": "@CanalOficial"}
+        ]
+    }
+    state_file.write_text(json.dumps(data), encoding="utf-8")
+
+    name, url = resolve_channel_identity(str(state_file), "meucanal")
+    assert name == "@CanalOficial"
+    assert url == "https://youtube.com/@CanalOficial"
+
+
+def test_resolve_channel_identity_fallback(tmp_path):
+    """Verifica fallback para o nome da pasta quando o arquivo JSON não existe."""
+    non_existent = tmp_path / "escriba_inexistente.json"
+    name, url = resolve_channel_identity(str(non_existent), "canal_pasta")
+    assert name == "canal_pasta"
+    assert url == "https://youtube.com/@canal_pasta"
+

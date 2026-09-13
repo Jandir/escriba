@@ -613,6 +613,56 @@ def get_channel_url(channel_name_str: str) -> str:
     return f"https://youtube.com/{handle_str}"
 
 
+def resolve_channel_identity(state_path_str: str, fallback_channel_name_str: str) -> Tuple[str, str]:
+    """
+    Recupera a identidade real do canal (handle/nome e URL) a partir do JSON de estado.
+    
+    EXPLICAÇÃO PARA JUNIORES:
+    O nome da pasta local pode ser simplificado (ex: 'michaelheiser'), mas o canal real
+    no YouTube é '@DRMSH'. Esta função lê o arquivo de estado escriba_*.json para 
+    obter o identificador e a URL oficiais do canal, evitando que os volumes sejam 
+    gerados com o nome ou URL errados (ex: '@michaelheiser').
+    """
+    if os.path.exists(state_path_str):
+        try:
+            with open(state_path_str, 'r', encoding='utf-8') as file_descriptor_obj:
+                data_dict: Dict[str, Any] = json.load(file_descriptor_obj)
+
+            url_str: Optional[str] = data_dict.get("youtube_channel") or data_dict.get("vimeo_channel")
+            name_str: Optional[str] = data_dict.get("channel_context")
+
+            if not name_str:
+                yt_chans_list: List[str] = data_dict.get("youtube_channels") or []
+                if isinstance(yt_chans_list, list) and yt_chans_list:
+                    name_str = yt_chans_list[0]
+            if not name_str:
+                vi_chans_list: List[str] = data_dict.get("vimeo_channels") or []
+                if isinstance(vi_chans_list, list) and vi_chans_list:
+                    name_str = vi_chans_list[0]
+            if not name_str:
+                videos_list: List[Dict[str, Any]] = data_dict.get("videos") or []
+                for video_dict in videos_list:
+                    if video_dict.get("source_channel"):
+                        name_str = video_dict["source_channel"]
+                        break
+
+            if not name_str and url_str:
+                if "@" in url_str:
+                    name_str = "@" + url_str.split("@", 1)[1].split("/")[0]
+
+            name_str = name_str or fallback_channel_name_str
+
+            # Se a URL encontrada for de playlist ou vídeo (watch) mas temos um handle, usa a URL do canal
+            if not url_str or "/playlist?" in url_str or "/watch?" in url_str:
+                url_str = get_channel_url(name_str)
+
+            return name_str, url_str
+        except Exception:
+            pass
+
+    return fallback_channel_name_str, get_channel_url(fallback_channel_name_str)
+
+
 def generate_volume_header(channel_name_str: str, channel_url_str: str) -> str:
     """
     Gera as primeiras linhas de cada arquivo de Volume.
@@ -812,7 +862,8 @@ def process_channel(channel_dir_path_str: str, channel_name_str: str, reset_mode
     )
     
     if not files_to_proc_list and not reset_mode_bool:
-        print_ok(f"Canal: {channel_name_str} — nenhum arquivo novo.")
+        display_channel_str, _ = resolve_channel_identity(paths_dict["state"], channel_name_str)
+        print_ok(f"Canal: {display_channel_str} — nenhum arquivo novo.")
         return
 
     # Inicia a "fábrica" de volumes (consolidação)
@@ -1070,11 +1121,13 @@ def _orchestrate_consolidation(channel_name_str: str, files_list_list: List[str]
     Quando a caixa enche, você fecha ela, gera um índice e abre uma caixa 
     nova (v002, v003...). Isso garante que os arquivos não fiquem gigantescos.
     """
-    url_str: str = get_channel_url(channel_name_str)
+    display_channel_str, url_str = resolve_channel_identity(paths_dict["state"], channel_name_str)
     vol_idx_int: int = state_dict["last_volume"]
     
     # Tenta continuar de onde parou no volume atual (se ele não estiver cheio)
-    vol_content_str: str = _initialize_volume_content(paths_dict, channel_name_str, vol_idx_int, reset_mode_bool)
+    vol_content_str: str = _initialize_volume_content(
+        paths_dict, channel_name_str, vol_idx_int, reset_mode_bool, display_channel_str, url_str
+    )
     
     # Extrai metadados dos vídeos que já estavam neste volume retomado
     vol_meta_list_list: List[Dict[str, str]] = extract_metadata_from_volume(vol_content_str)
@@ -1127,7 +1180,7 @@ def _orchestrate_consolidation(channel_name_str: str, files_list_list: List[str]
                 vol_idx_int += 1
                 
             # Começa um novo volume do zero
-            vol_content_str = generate_volume_header(channel_name_str, url_str)
+            vol_content_str = generate_volume_header(display_channel_str, url_str)
             vol_meta_list_list = []
 
         # Adiciona o texto do vídeo ao volume na memória
@@ -1137,7 +1190,9 @@ def _orchestrate_consolidation(channel_name_str: str, files_list_list: List[str]
         _update_processing_state(state_dict, f_str, meta_dict_dict["id"], paths_dict["archive"])
 
     # Finaliza salvando o que sobrou no último volume e gravando o JSON final
-    _finalize_consolidation(paths_dict, channel_name_str, vol_idx_int, vol_content_str, vol_meta_list_list, state_dict)
+    _finalize_consolidation(
+        paths_dict, channel_name_str, vol_idx_int, vol_content_str, vol_meta_list_list, state_dict, display_channel_str, url_str
+    )
 
 
 def _update_processing_state(state_dict: Dict[str, Any], f_str: str, vid_id_str: str, archive_path_str: str) -> None:
@@ -1158,7 +1213,14 @@ def _update_processing_state(state_dict: Dict[str, Any], f_str: str, vid_id_str:
     _archive_files(source_dir_path_str, archive_path_str, [f_str])
 
 
-def _initialize_volume_content(paths_dict: Dict[str, str], channel_name_str: str, vol_idx_int: int, reset_mode_bool: bool) -> str:
+def _initialize_volume_content(
+    paths_dict: Dict[str, str],
+    channel_name_str: str,
+    vol_idx_int: int,
+    reset_mode_bool: bool,
+    display_channel_str: Optional[str] = None,
+    channel_url_str: Optional[str] = None,
+) -> str:
     """
     Tenta carregar o conteúdo do volume atual para continuar de onde parou.
     
@@ -1183,6 +1245,14 @@ def _initialize_volume_content(paths_dict: Dict[str, str], channel_name_str: str
         
     print_info(f"Retomando Volume {vol_idx_int} ({len(content_str):,} chars)")
     
+    # Atualiza cabeçalho existente caso o canal ou URL tenham mudado/sido corrigidos
+    if display_channel_str and channel_url_str and content_str.startswith("=" * 60):
+        marker_header_end_str: str = f"{'='*60}\n\n"
+        if marker_header_end_str in content_str:
+            _, body_str = content_str.split(marker_header_end_str, 1)
+            new_header_str: str = generate_volume_header(display_channel_str, channel_url_str)
+            content_str = f"{new_header_str}\n{body_str}"
+
     # O índice antigo fica no final do arquivo. Precisamos removê-lo para adicionar 
     # mais conteúdo e depois gerar um índice novo e completo.
     marker_str: str = f"\n\n{'='*60}\nÍNDICE DE VÍDEOS NESTE VOLUME"
@@ -1284,7 +1354,16 @@ def _save_volume(paths_dict: Dict[str, str], channel_name_str: str, idx_int: int
     print_ok(f"Volume {idx_int} finalizado ({len(full_content_str):,} caracteres)")
 
 
-def _finalize_consolidation(paths_dict: Dict[str, str], name_str: str, idx_int: int, content_str: str, meta_list_list: List[Dict[str, str]], state_dict: Dict[str, Any]) -> None:
+def _finalize_consolidation(
+    paths_dict: Dict[str, str],
+    name_str: str,
+    idx_int: int,
+    content_str: str,
+    meta_list_list: List[Dict[str, str]],
+    state_dict: Dict[str, Any],
+    display_channel_str: Optional[str] = None,
+    channel_url_str: Optional[str] = None,
+) -> None:
     """
     Salva o último volume (se não vazio) e persiste o estado final.
     
@@ -1294,7 +1373,9 @@ def _finalize_consolidation(paths_dict: Dict[str, str], name_str: str, idx_int: 
     garantir que não haja duplicatas antes de gravar o JSON de estado.
     """
     if content_str:
-        header_only_str: str = generate_volume_header(name_str, get_channel_url(name_str))
+        if not display_channel_str or not channel_url_str:
+            display_channel_str, channel_url_str = resolve_channel_identity(paths_dict["state"], name_str)
+        header_only_str: str = generate_volume_header(display_channel_str, channel_url_str)
         # Só salva se tiver algo além do cabeçalho
         if content_str.strip() != header_only_str.strip():
             _save_volume(paths_dict, name_str, idx_int, content_str, meta_list_list)
