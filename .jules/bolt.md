@@ -33,3 +33,7 @@
 ## 2026-08-20 - Fast file path categorization and concatenation
 **Learning:** Instantiating `pathlib.Path` objects and concatenating paths using the `/` operator inside a tight loop with redundant iterations adds measurable performance overhead. When partitioning lists of file paths based on extensions, replacing multiple list comprehensions containing pathlib `/` division with a single `for` loop and `os.path.join` avoids redundant iterations and minimizes object instantiation overhead, yielding significant speedups.
 **Action:** When scanning a directory to categorize files based on string suffixes, use a single `for` loop with `if/elif` blocks and convert the base `Path` to a string once before the loop to use `os.path.join(base_str, f)`.
+
+## 2024-10-27 - Fast directory cleanup with os.scandir
+**Learning:** Multiple calls to `Path.glob` for different file extensions in the same directory (like cleaning up temp files) scales poorly as it reads the directory and instantiates Path objects multiple times. Using a single `os.scandir` loop and checking `entry.name.endswith()` with a tuple of extensions avoids redundant system calls and object instantiations, significantly speeding up hot paths.
+**Action:** Replace multiple `Path.glob` sweeps with a single `os.scandir` pass when filtering or cleaning up files by multiple extension types.
