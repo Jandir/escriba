@@ -220,6 +220,8 @@ def fix_sentence_capitalization(text_str: str) -> str:
     return clean_txt
 
 
+_END_PUNCT_PATTERN = re.compile(r'[.!?\x3a\x3b,]$')
+
 def restore_punctuation_heuristics(text_str: str, pause_after_seconds: float = 0.0, is_last_segment: bool = False) -> str:
     """
     Restaura pontuação gramatical local baseando-se no tempo de pausa entre legendas ASR
@@ -233,7 +235,7 @@ def restore_punctuation_heuristics(text_str: str, pause_after_seconds: float = 0
         return text_str
 
     # Se o texto não termina com pontuação (. ! ? , ; :)
-    if not re.search(r'[.!?\x3a\x3b,]$', clean_txt):
+    if not _END_PUNCT_PATTERN.search(clean_txt):
         if is_last_segment or pause_after_seconds >= 0.4:
             clean_txt += "."
         elif pause_after_seconds >= 0.15:

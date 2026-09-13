@@ -68,10 +68,69 @@ def test_create_adaptive_windows_basic():
     assert windows_list[0]["text"] == "Olá. Mundo."
 
 
+def test_create_adaptive_windows_multi_minute():
+    """Garante que janelas adaptativas fecham corretamente quando decorridos mais de 60 segundos."""
+    mock_sub1 = MagicMock()
+    mock_sub1.start = pysrt.SubRipTime(seconds=5)
+    mock_sub1.end = pysrt.SubRipTime(seconds=30)
+    mock_sub1.text = "Primeiro bloco de fala."
+
+    mock_sub2 = MagicMock()
+    mock_sub2.start = pysrt.SubRipTime(minutes=1, seconds=15)
+    mock_sub2.end = pysrt.SubRipTime(minutes=1, seconds=45)
+    mock_sub2.text = "Segundo bloco de fala após mais de um minuto."
+
+    mock_sub3 = MagicMock()
+    mock_sub3.start = pysrt.SubRipTime(minutes=3, seconds=0)
+    mock_sub3.end = pysrt.SubRipTime(minutes=3, seconds=30)
+    mock_sub3.text = "Terceiro bloco bem mais à frente."
+
+    subs_list = [mock_sub1, mock_sub2, mock_sub3]
+    windows_list, clean_texts = create_adaptive_windows(subs_list, window_size_s_int=60)
+
+    # Com a correção de tempo real, a janela fecha ao ultrapassar 60s
+    assert len(windows_list) == 2
+    assert len(windows_list[0]["subs"]) == 2
+    assert len(windows_list[1]["subs"]) == 1
 
 
+def test_process_sub_into_para_flushes_on_timeout():
+    """Verifica se parágrafos são quebrados quando ultrapassa 60 segundos com pontuação de fim de frase."""
+    from escriba import _process_sub_into_para
+    import re
+    sentence_end_re = re.compile(r'[.!?]["\']?\s*$')
+
+    md_lines: list[str] = []
+    sub1 = MagicMock()
+    sub1.start = pysrt.SubRipTime(seconds=0)
+    sub1.end = pysrt.SubRipTime(seconds=30)
+    sub1.text = "Início da conversa."
+
+    para_start, para_lines = _process_sub_into_para(sub1, None, [], md_lines, sentence_end_re)
+    assert len(para_lines) == 1
+    assert len(md_lines) == 0
+
+    sub2 = MagicMock()
+    sub2.start = pysrt.SubRipTime(minutes=1, seconds=10)
+    sub2.end = pysrt.SubRipTime(minutes=1, seconds=15)
+    sub2.text = "Fim do primeiro parágrafo."
+
+    para_start2, para_lines2 = _process_sub_into_para(sub2, para_start, para_lines, md_lines, sentence_end_re)
+    # Deve ter dado flush no parágrafo porque decorreram 75s (>= 60s) e terminou em ponto final
+    assert len(md_lines) == 1
+    assert para_start2 is None
+    assert len(para_lines2) == 0
 
 
+def test_setup_vectorizer_detects_orig_suffix():
+    """Garante que nomes de arquivos com sufixo -orig extraem o código de idioma correto."""
+    from escriba import _setup_vectorizer
+    windows = [{"text": "sample text for test"}]
+    _, _, lang_en, _ = _setup_vectorizer("michaelheiser-_2soU_pP4dw-en-orig.srt", windows)
+    assert lang_en == "en"
+
+    _, _, lang_pt, _ = _setup_vectorizer("canal-123.pt-orig.srt", windows)
+    assert lang_pt == "pt"
 
 
 # ─── Ambiente e Idioma ───────────────────────────────────────────────────────
