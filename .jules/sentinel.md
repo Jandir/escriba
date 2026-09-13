@@ -16,3 +16,7 @@
 **Vulnerability:** The application used `os.system("")` on Windows to enable ANSI color support in the terminal. This approach unnecessarily spawned a full `cmd.exe` subshell, which carries security risks (e.g., executing malicious AutoRun scripts defined in the Windows Registry) and incurs performance overhead.
 **Learning:** Using side-effects of shell invocations to modify console state is poor practice. The Windows API natively supports enabling Virtual Terminal Processing without spawning child processes.
 **Prevention:** To safely enable ANSI color support on Windows terminals, always use explicit Windows API calls via `ctypes.windll.kernel32.SetConsoleMode` with the `ENABLE_VIRTUAL_TERMINAL_PROCESSING` flag (0x0004) on standard output rather than relying on `os.system`.
+## 2025-02-28 - Mitigating DoS Risks via Subprocess Timeouts
+**Vulnerability:** Indefinite hangs caused by external processes (e.g., yt-dlp) lacking strict timeouts.
+**Learning:** External processes can hang indefinitely due to network issues or unexpected behavior, leading to resource exhaustion (DoS).
+**Prevention:** Always enforce a strict `timeout` argument on `subprocess.run` and `subprocess.Popen.wait()` calls, and properly handle `subprocess.TimeoutExpired` exceptions.
