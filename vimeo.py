@@ -234,6 +234,8 @@ def generate_fast_list_json(
     videos_found_list: list[dict[str, Any]] = []
     consecutive_known_count_int: int = 0
 
+    import threading
+    import queue
     try:
         with subprocess.Popen(
             cmd_list,
@@ -243,7 +245,28 @@ def generate_fast_list_json(
             encoding="utf-8"
         ) as process_obj:
             if process_obj.stdout:
-                for line_str in process_obj.stdout:
+                q: queue.Queue[str | None] = queue.Queue()
+                def _reader() -> None:
+                    try:
+                        if process_obj.stdout:
+                            for line in process_obj.stdout:
+                                q.put(line)
+                    finally:
+                        q.put(None)
+
+                t = threading.Thread(target=_reader, daemon=True)
+                t.start()
+
+                while True:
+                    try:
+                        line_str = q.get(timeout=60.0)
+                    except queue.Empty:
+                        process_obj.kill()
+                        raise subprocess.TimeoutExpired(cmd_list, 60.0)
+
+                    if line_str is None:
+                        break
+
                     record_dict: dict[str, Any] | None = _parse_vimeo_video_record(
                         line_str, channel_url_str, history_dict
                     )
@@ -265,7 +288,11 @@ def generate_fast_list_json(
                     )
                     sys.stdout.flush()
 
-            process_obj.wait()
+            try:
+                process_obj.wait(timeout=60.0)
+            except subprocess.TimeoutExpired:
+                process_obj.kill()
+                raise
             print()
 
             if process_obj.returncode != 0 and not videos_found_list and not (stop_at_ids and process_obj.returncode == -15):
