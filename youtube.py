@@ -242,6 +242,8 @@ def generate_fast_list_json(
     videos_found_list: list[dict[str, Any]] = []
     stop_reached = False
     
+    import threading
+    import queue
     for current_url in urls_to_try:
         if stop_reached:
             break
@@ -259,7 +261,28 @@ def generate_fast_list_json(
                 cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8"
             ) as process_obj:
                 if process_obj.stdout:
-                    for line_str in process_obj.stdout:
+                    q: queue.Queue[str | None] = queue.Queue()
+                    def _reader() -> None:
+                        try:
+                            if process_obj.stdout:
+                                for line in process_obj.stdout:
+                                    q.put(line)
+                        finally:
+                            q.put(None)
+
+                    t = threading.Thread(target=_reader, daemon=True)
+                    t.start()
+
+                    while True:
+                        try:
+                            line_str = q.get(timeout=60.0)
+                        except queue.Empty:
+                            process_obj.kill()
+                            raise subprocess.TimeoutExpired(cmd_list, 60.0)
+
+                        if line_str is None:
+                            break
+
                         stripped_line = line_str.strip()
                         if not stripped_line:
                             continue
@@ -299,7 +322,11 @@ def generate_fast_list_json(
                         sys.stdout.write(f"\r{ICON_WAIT}  {BCYAN}Vídeos mapeados: {len(videos_found_list)}{RESET}")
                         sys.stdout.flush()
                 
-                process_obj.wait()
+                try:
+                    process_obj.wait(timeout=60.0)
+                except subprocess.TimeoutExpired:
+                    process_obj.kill()
+                    raise
                 print()
                 
                 if process_obj.returncode != 0 and not videos_found_list and not (stop_at_ids and process_obj.returncode == -15):
