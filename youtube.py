@@ -536,7 +536,9 @@ def filter_youtube_cookies(cookies_path_obj: Path) -> None:
             lines_list: list[str] = file_descriptor_obj.readlines()
 
         filtered_lines_list: list[str] = []
-        allowed_domains = ["youtube.com", "google.com"]
+        allowed_domains_exact: tuple[str, ...] = ("youtube.com", "google.com")
+        allowed_domains_suffix: tuple[str, ...] = (".youtube.com", ".google.com")
+
         for line_str in lines_list:
             if line_str.startswith("#") and not line_str.startswith("#HttpOnly_"):
                 filtered_lines_list.append(line_str)
@@ -546,10 +548,8 @@ def filter_youtube_cookies(cookies_path_obj: Path) -> None:
             parts = cookie_line.split("\t")
             if parts:
                 domain = parts[0].strip()
-                for allowed in allowed_domains:
-                    if domain.endswith("." + allowed) or domain == allowed:
-                        filtered_lines_list.append(line_str)
-                        break
+                if domain in allowed_domains_exact or domain.endswith(allowed_domains_suffix):
+                    filtered_lines_list.append(line_str)
 
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:
             file_descriptor_obj.writelines(filtered_lines_list)

@@ -241,13 +241,14 @@ def test_filter_vimeo_cookies(tmp_path: Path) -> None:
 
 def test_is_allowed_vimeo_domain() -> None:
     """Verifica a função auxiliar de correspondência de domínios permitidos."""
-    allowed = ["vimeo.com", "akamaized.net"]
-    assert _is_allowed_vimeo_domain("vimeo.com", allowed) is True
-    assert _is_allowed_vimeo_domain(".vimeo.com", allowed) is True
-    assert _is_allowed_vimeo_domain("player.vimeo.com", allowed) is True
-    assert _is_allowed_vimeo_domain("akamaized.net", allowed) is True
-    assert _is_allowed_vimeo_domain("youtube.com", allowed) is False
-    assert _is_allowed_vimeo_domain("notvimeo.com", allowed) is False
+    exact = ("vimeo.com", "akamaized.net")
+    suffix = (".vimeo.com", ".akamaized.net")
+    assert _is_allowed_vimeo_domain("vimeo.com", exact, suffix) is True
+    assert _is_allowed_vimeo_domain(".vimeo.com", exact, suffix) is True
+    assert _is_allowed_vimeo_domain("player.vimeo.com", exact, suffix) is True
+    assert _is_allowed_vimeo_domain("akamaized.net", exact, suffix) is True
+    assert _is_allowed_vimeo_domain("youtube.com", exact, suffix) is False
+    assert _is_allowed_vimeo_domain("notvimeo.com", exact, suffix) is False
 
 
 def test_is_rate_limit_error() -> None:
