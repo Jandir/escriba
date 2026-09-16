@@ -496,9 +496,9 @@ def download_video(
             return int(DownloadResult.FAILED)
 
 
-def _is_allowed_vimeo_domain(domain_str: str, allowed_domains_list: list[str]) -> bool:
+def _is_allowed_vimeo_domain(domain_str: str, allowed_exact: tuple[str, ...], allowed_suffix: tuple[str, ...]) -> bool:
     """Verifica se um domínio de cookie pertence ao Vimeo ou CDNs autorizadas."""
-    return any(domain_str.endswith("." + allowed) or domain_str == allowed for allowed in allowed_domains_list)
+    return domain_str in allowed_exact or domain_str.endswith(allowed_suffix)
 
 
 def filter_vimeo_cookies(cookies_path_obj: Path) -> None:
@@ -513,7 +513,9 @@ def filter_vimeo_cookies(cookies_path_obj: Path) -> None:
             lines_list: list[str] = file_descriptor_obj.readlines()
 
         filtered_lines_list: list[str] = []
-        allowed_domains_list: list[str] = ["vimeo.com", "akamaized.net"]
+        # Bolt: Optimize domain matching using tuples and exact/suffix checks
+        allowed_exact: tuple[str, ...] = ("vimeo.com", "akamaized.net")
+        allowed_suffix: tuple[str, ...] = (".vimeo.com", ".akamaized.net")
 
         for line_str in lines_list:
             if line_str.startswith("#") and not line_str.startswith("#HttpOnly_"):
@@ -524,7 +526,7 @@ def filter_vimeo_cookies(cookies_path_obj: Path) -> None:
             parts_list: list[str] = cookie_line_str.split("\t")
             if parts_list:
                 domain_str: str = parts_list[0].strip()
-                if _is_allowed_vimeo_domain(domain_str, allowed_domains_list):
+                if _is_allowed_vimeo_domain(domain_str, allowed_exact, allowed_suffix):
                     filtered_lines_list.append(line_str)
 
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:
