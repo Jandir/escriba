@@ -36,3 +36,6 @@
 ## 2024-09-17 - Tuple-based suffix matching vs generator loop
 **Learning:** Using `endswith` with a tuple of suffixes and exact matching via `in` with a tuple is ~6x faster than evaluating a generator expression with string concatenation inside `any()` for matching cookie domains.
 **Action:** Prefer `in` and `.endswith()` with tuples for performance-sensitive string matching rather than loops or generators.
+## 2026-03-16 - Fast fixed-format string validation
+**Learning:** For validating short, fixed-format strings like ISO dates (`YYYY-MM-DD`), using native string length checks and index character checks (e.g. `len(s) == 10 and s[4] == '-'`) is up to 3-4x faster than using `re.match` inline or compiled.
+**Action:** Prefer native string structure checks over `re.match` for simple, strict format validation inside utility functions.
