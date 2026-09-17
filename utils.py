@@ -260,7 +260,7 @@ def format_date(raw_date_any: Optional[str | int]) -> str:
         return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
     
     # Caso 2: Já está no formato adequado ISO (YYYY-MM-DD)
-    if re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+    if len(date_str) == 10 and date_str[4] == '-' and date_str[7] == '-':
         return date_str
         
     # Fallback suave caso venha qualquer string inusitada (por exemplo, "None" ou "N/A")
