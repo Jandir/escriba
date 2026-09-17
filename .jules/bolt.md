@@ -33,3 +33,6 @@
 ## 2026-08-20 - Fast file path categorization and concatenation
 **Learning:** Instantiating `pathlib.Path` objects and concatenating paths using the `/` operator inside a tight loop with redundant iterations adds measurable performance overhead. When partitioning lists of file paths based on extensions, replacing multiple list comprehensions containing pathlib `/` division with a single `for` loop and `os.path.join` avoids redundant iterations and minimizes object instantiation overhead, yielding significant speedups.
 **Action:** When scanning a directory to categorize files based on string suffixes, use a single `for` loop with `if/elif` blocks and convert the base `Path` to a string once before the loop to use `os.path.join(base_str, f)`.
+## 2024-09-17 - Tuple-based suffix matching vs generator loop
+**Learning:** Using `endswith` with a tuple of suffixes and exact matching via `in` with a tuple is ~6x faster than evaluating a generator expression with string concatenation inside `any()` for matching cookie domains.
+**Action:** Prefer `in` and `.endswith()` with tuples for performance-sensitive string matching rather than loops or generators.
