@@ -19,4 +19,9 @@
 ## 2025-02-28 - Mitigating DoS Risks via Subprocess Timeouts
 **Vulnerability:** Indefinite hangs caused by external processes (e.g., yt-dlp) lacking strict timeouts.
 **Learning:** External processes can hang indefinitely due to network issues or unexpected behavior, leading to resource exhaustion (DoS).
-**Prevention:** Always enforce a strict `timeout` argument on `subprocess.run` and `subprocess.Popen.wait()` calls, and properly handle `subprocess.TimeoutExpired` exceptions.
+**Prevention:** Always enforce a strict `timeout` argument on `subprocess.run` and `subprocess.Popen.wait()` calls, and properly handle `subprocess.TimeoutExpired` exceptions. When reading from standard output using an iterator `for line in process.stdout:`, the I/O read is blocking and setting a timeout on `wait()` won't interrupt the blocked read. Instead, use non-blocking reads, a background thread to read, or `process.communicate(timeout=...)`. However, if continuous line-by-line processing is required, ensure you're using a proper way to stream with timeouts.
+
+## 2025-03-05 - [Missing Subprocess Timeout on External Process]
+**Vulnerability:** In `escriba.py`, `_execute_direct_download` uses `subprocess.run(cmd_list)` without a `timeout` argument to run an external command (`yt-dlp`). If `yt-dlp` hangs indefinitely (e.g., due to a stalled network connection, a server-side infinite loop, or a hanging process reading a pipe), the Python thread blocks indefinitely. This represents a Denial-of-Service (DoS) vulnerability.
+**Learning:** `subprocess.run` blocks by default until the command completes. Even if the application logic assumes the command will exit naturally, external binaries (especially network-dependent ones like `yt-dlp` or `ffmpeg`) can fail to terminate. Always enforcing a generous timeout handles these edge cases securely.
+**Prevention:** Always enforce a strict `timeout` argument on `subprocess.run` or `subprocess.Popen.wait()` calls, particularly when invoking external binaries or long-running tasks. Handle the `subprocess.TimeoutExpired` exception to fail securely or recover.
