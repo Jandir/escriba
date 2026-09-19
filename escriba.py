@@ -2736,10 +2736,13 @@ def _build_yt_dlp_direct_cmd(
 def _execute_direct_download(cmd_list: list[str]) -> None:
     """Executa o processo yt-dlp de download direto de vídeo."""
     try:
-        process_result_obj = subprocess.run(cmd_list)
+        process_result_obj = subprocess.run(cmd_list, timeout=3600)
         if process_result_obj.returncode != 0:
             print_err(f"O download falhou com código de retorno {process_result_obj.returncode}.")
             sys.exit(process_result_obj.returncode)
+    except subprocess.TimeoutExpired:
+        print_err("O download excedeu o tempo limite (timeout) e foi abortado.")
+        sys.exit(1)
     except Exception as error_obj:
         print_err(f"Erro inesperado durante o download do vídeo: {error_obj}")
         sys.exit(1)
