@@ -36,3 +36,7 @@
 ## 2024-09-17 - Tuple-based suffix matching vs generator loop
 **Learning:** Using `endswith` with a tuple of suffixes and exact matching via `in` with a tuple is ~6x faster than evaluating a generator expression with string concatenation inside `any()` for matching cookie domains.
 **Action:** Prefer `in` and `.endswith()` with tuples for performance-sensitive string matching rather than loops or generators.
+
+## 2026-11-05 - Pre-compile inline text cleaning regexes
+**Learning:** Pre-compiling `re` regular expressions into global variables significantly speeds up function calls compared to calling `re.sub` directly with inline patterns each time, because it skips the regex cache lookup inside tight text-processing loops.
+**Action:** Extract and pre-compile regular expressions at the module scope when performing text normalization like stripping markdown headers, timestamps, and quotes from multiline strings.

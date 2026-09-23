@@ -38,6 +38,13 @@ from escriba import (
 )
 from utils import print_ok, print_info, print_warn, print_section, print_err
 
+# Regexes pré-compiladas para particionamento de texto
+_H_PATTERN = re.compile(r"^\s*#+.*$", flags=re.MULTILINE)
+_QUOTE_PATTERN = re.compile(r"^\s*>.*$", flags=re.MULTILINE)
+_TOPIC_PATTERN = re.compile(r"^\s*\*\s+`?\[?\d{2}:\d{2}(?::\d{2})?\]?`?.*$", flags=re.MULTILINE)
+_TS_PATTERN = re.compile(r"\[\d{2}:\d{2}(?::\d{2})?\]")
+_SPEAKER_PATTERN = re.compile(r">>+")
+
 
 def parse_frontmatter(content: str) -> Tuple[Dict[str, str], str]:
     """Separa o YAML frontmatter do corpo do arquivo markdown."""
@@ -92,12 +99,12 @@ def detect_dominant_language(text: str, current_lang: str = "pt") -> str:
 def partition_into_paragraphs(raw_body: str, total_seconds: int) -> List[Tuple[int, str]]:
     """Divide um corpo de texto longo em parágrafos pontuados com timestamps estimados."""
     # 1. Limpa títulos markdown, sumários pré-existentes, blockquotes e marcadores
-    cleaned = re.sub(r"^\s*#+.*$", "", raw_body, flags=re.MULTILINE)
-    cleaned = re.sub(r"^\s*>.*$", "", cleaned, flags=re.MULTILINE)
-    cleaned = re.sub(r"^\s*\*\s+`?\[?\d{2}:\d{2}(?::\d{2})?\]?`?.*$", "", cleaned, flags=re.MULTILINE)
-    cleaned = re.sub(r"\[\d{2}:\d{2}(?::\d{2})?\]", "", cleaned)
+    cleaned = _H_PATTERN.sub("", raw_body)
+    cleaned = _QUOTE_PATTERN.sub("", cleaned)
+    cleaned = _TOPIC_PATTERN.sub("", cleaned)
+    cleaned = _TS_PATTERN.sub("", cleaned)
     # Converte marcadores de falante '>>' em quebras de frase naturais
-    cleaned = re.sub(r">>+", ". ", cleaned)
+    cleaned = _SPEAKER_PATTERN.sub(". ", cleaned)
     cleaned = " ".join(cleaned.split())
 
     if not cleaned:
