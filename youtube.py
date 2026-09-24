@@ -4,6 +4,7 @@ import subprocess
 import json
 import shutil
 import re
+import threading
 from enum import IntEnum
 from pathlib import Path
 from collections import Counter
@@ -259,45 +260,50 @@ def generate_fast_list_json(
                 cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8"
             ) as process_obj:
                 if process_obj.stdout:
-                    for line_str in process_obj.stdout:
-                        stripped_line = line_str.strip()
-                        if not stripped_line:
-                            continue
-                        try:
-                            video_data_dict: dict[str, Any] = json.loads(stripped_line)
-                        except json.JSONDecodeError:
-                            continue
-                        
-                        video_id_str: str = video_data_dict.get("id", "")
-                        if not video_id_str: 
-                            continue
-                        
-                        if stop_at_ids and video_id_str in stop_at_ids:
-                            consecutive_known_count += 1
-                            if consecutive_known_count >= MAX_CONSECUTIVE_KNOWN:
-                                process_obj.terminate()
-                                stop_reached = True
-                                break
-                        else:
-                            consecutive_known_count = 0
+                    watchdog = threading.Timer(3600, process_obj.kill)
+                    watchdog.start()
+                    try:
+                        for line_str in process_obj.stdout:
+                            stripped_line = line_str.strip()
+                            if not stripped_line:
+                                continue
+                            try:
+                                video_data_dict: dict[str, Any] = json.loads(stripped_line)
+                            except json.JSONDecodeError:
+                                continue
 
-                        raw_date_any = video_data_dict.get("upload_date") or video_data_dict.get("publish_date") or video_data_dict.get("date")
-                        if not raw_date_any and history_dict:
-                            publish_date_str = history_dict.get(video_id_str, {}).get("publish_date", "Desconhecida")
-                        else:
-                            publish_date_str = format_date(raw_date_any)
-                        
-                        videos_found_list.append({
-                            "video_id": video_id_str,
-                            "title": video_data_dict.get("title") or "N/A",
-                            "publish_date": publish_date_str,
-                            "subtitle_downloaded": False,
-                            "info_downloaded": False,
-                            "has_no_subtitle": False
-                        })
-                        
-                        sys.stdout.write(f"\r{ICON_WAIT}  {BCYAN}Vídeos mapeados: {len(videos_found_list)}{RESET}")
-                        sys.stdout.flush()
+                            video_id_str: str = video_data_dict.get("id", "")
+                            if not video_id_str:
+                                continue
+
+                            if stop_at_ids and video_id_str in stop_at_ids:
+                                consecutive_known_count += 1
+                                if consecutive_known_count >= MAX_CONSECUTIVE_KNOWN:
+                                    process_obj.terminate()
+                                    stop_reached = True
+                                    break
+                            else:
+                                consecutive_known_count = 0
+
+                            raw_date_any = video_data_dict.get("upload_date") or video_data_dict.get("publish_date") or video_data_dict.get("date")
+                            if not raw_date_any and history_dict:
+                                publish_date_str = history_dict.get(video_id_str, {}).get("publish_date", "Desconhecida")
+                            else:
+                                publish_date_str = format_date(raw_date_any)
+
+                            videos_found_list.append({
+                                "video_id": video_id_str,
+                                "title": video_data_dict.get("title") or "N/A",
+                                "publish_date": publish_date_str,
+                                "subtitle_downloaded": False,
+                                "info_downloaded": False,
+                                "has_no_subtitle": False
+                            })
+
+                            sys.stdout.write(f"\r{ICON_WAIT}  {BCYAN}Vídeos mapeados: {len(videos_found_list)}{RESET}")
+                            sys.stdout.flush()
+                    finally:
+                        watchdog.cancel()
                 
                 process_obj.wait()
                 print()
