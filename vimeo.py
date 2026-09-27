@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import sys
 from collections import Counter
 from enum import IntEnum
@@ -242,28 +243,37 @@ def generate_fast_list_json(
             text=True,
             encoding="utf-8"
         ) as process_obj:
-            if process_obj.stdout:
-                for line_str in process_obj.stdout:
-                    record_dict: dict[str, Any] | None = _parse_vimeo_video_record(
-                        line_str, channel_url_str, history_dict
-                    )
-                    if not record_dict:
-                        continue
+            timer_obj = threading.Timer(60, process_obj.kill)
+            timer_obj.start()
+            try:
+                if process_obj.stdout:
+                    for line_str in process_obj.stdout:
+                        timer_obj.cancel()
+                        timer_obj = threading.Timer(60, process_obj.kill)
+                        timer_obj.start()
 
-                    video_id_str: str = record_dict["video_id"]
-                    if stop_at_ids and video_id_str in stop_at_ids:
-                        consecutive_known_count_int += 1
-                        if consecutive_known_count_int >= MAX_CONSECUTIVE_KNOWN:
-                            process_obj.terminate()
-                            break
-                    else:
-                        consecutive_known_count_int = 0
+                        record_dict: dict[str, Any] | None = _parse_vimeo_video_record(
+                            line_str, channel_url_str, history_dict
+                        )
+                        if not record_dict:
+                            continue
 
-                    videos_found_list.append(record_dict)
-                    sys.stdout.write(
-                        f"\r{ICON_WAIT}  {BCYAN}Vídeos mapeados: {len(videos_found_list)}{RESET}"
-                    )
-                    sys.stdout.flush()
+                        video_id_str: str = record_dict["video_id"]
+                        if stop_at_ids and video_id_str in stop_at_ids:
+                            consecutive_known_count_int += 1
+                            if consecutive_known_count_int >= MAX_CONSECUTIVE_KNOWN:
+                                process_obj.terminate()
+                                break
+                        else:
+                            consecutive_known_count_int = 0
+
+                        videos_found_list.append(record_dict)
+                        sys.stdout.write(
+                            f"\r{ICON_WAIT}  {BCYAN}Vídeos mapeados: {len(videos_found_list)}{RESET}"
+                        )
+                        sys.stdout.flush()
+            finally:
+                timer_obj.cancel()
 
             process_obj.wait()
             print()
