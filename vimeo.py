@@ -4,6 +4,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from collections import Counter
 from enum import IntEnum
 from pathlib import Path
@@ -243,7 +245,23 @@ def generate_fast_list_json(
             encoding="utf-8"
         ) as process_obj:
             if process_obj.stdout:
+                # 🛡️ Sentinel: Mitigating DoS risks by implementing an inactivity watchdog
+                # Subprocesses reading from stdout can hang indefinitely if the process stalls.
+                # This thread enforces a 60-second inactivity timeout.
+                last_output_time = [time.monotonic()]
+
+                def watchdog():
+                    while process_obj.poll() is None:
+                        if time.monotonic() - last_output_time[0] > 60:
+                            process_obj.kill()
+                            break
+                        time.sleep(1)
+
+                watchdog_thread = threading.Thread(target=watchdog, daemon=True)
+                watchdog_thread.start()
+
                 for line_str in process_obj.stdout:
+                    last_output_time[0] = time.monotonic()
                     record_dict: dict[str, Any] | None = _parse_vimeo_video_record(
                         line_str, channel_url_str, history_dict
                     )
