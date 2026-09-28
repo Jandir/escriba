@@ -36,3 +36,7 @@
 ## 2024-09-17 - Tuple-based suffix matching vs generator loop
 **Learning:** Using `endswith` with a tuple of suffixes and exact matching via `in` with a tuple is ~6x faster than evaluating a generator expression with string concatenation inside `any()` for matching cookie domains.
 **Action:** Prefer `in` and `.endswith()` with tuples for performance-sensitive string matching rather than loops or generators.
+
+## 2026-11-12 - Pre-compile Regex in hot paths for re.match and re.search
+**Learning:** Just as with `re.sub()`, using `re.match()` and `re.search()` with inline patterns inside tight loops or list comprehensions causes overhead from internal regex cache lookups. Pre-compiling to a global pattern and using `pattern.match()` or `pattern.search()` can improve parsing speed, saving milliseconds in hot paths.
+**Action:** Extract and pre-compile regular expressions used in `re.match()` and `re.search()` to global module-level variables when they are executed frequently.
