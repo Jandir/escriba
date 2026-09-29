@@ -169,6 +169,10 @@ VIDEO_ID_REGEX_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 VIMEO_ID_REGEX_PATTERN = re.compile(r"^\d{7,12}$")
 _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 
+# BOLT OPTIMIZATION: Pre-compiled regex patterns for VTT time parsing to avoid compilation overhead inside loops
+_VTT_TIME_PATTERN_LONG = re.compile(r"(\d{2}:\d{2}:\d{2})[.,](\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2})[.,](\d{3})")
+_VTT_TIME_PATTERN_SHORT = re.compile(r"(\d{2}:\d{2})[.,](\d{3})\s*-->\s*(\d{2}:\d{2})[.,](\d{3})")
+
 # Carrega variáveis do .env (localizado no diretório do script)
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -985,6 +989,10 @@ def _process_sub_into_para(
     return para_start_time, para_lines_list
 
 
+# BOLT OPTIMIZATION: Pre-compiled regex for sentence boundary detection
+_SENTENCE_END_PATTERN = re.compile(r'[.!?]["\']?\s*$')
+
+
 def _generate_transcription_structured(
     segments: list[tuple[str, int, list[dict[str, Any]]]],
     topic_labels: list[str],
@@ -992,7 +1000,6 @@ def _generate_transcription_structured(
     clean_texts: dict[int, str] | None = None,
 ) -> None:
     """Gera a transcrição estruturada por tópicos com hierarquia H3 (###)."""
-    sentence_end_re = re.compile(r'[.!?]["\']?\s*$')
     for (ts_str, _, seg_wins_list), label_str in zip(segments, topic_labels):
         md_lines.append(f"### [{ts_str}] - Tópico: {label_str}\n")
         para_lines_list: list[str] = []
@@ -1000,7 +1007,7 @@ def _generate_transcription_structured(
         for window_dict in seg_wins_list:
             for sub_obj in window_dict["subs"]:
                 para_start_time, para_lines_list = _process_sub_into_para(
-                    sub_obj, para_start_time, para_lines_list, md_lines, sentence_end_re, clean_texts
+                    sub_obj, para_start_time, para_lines_list, md_lines, _SENTENCE_END_PATTERN, clean_texts
                 )
         if para_lines_list:
             _flush_paragraph(_dedup_lines(para_lines_list), _smart_ts(para_start_time), md_lines)
@@ -1228,9 +1235,9 @@ def convert_vtt_to_srt(vtt_path: Path) -> Path:
         time_line = lines[time_line_idx]
         text_lines = lines[time_line_idx + 1:]
 
-        match = re.search(r"(\d{2}:\d{2}:\d{2})[.,](\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2})[.,](\d{3})", time_line)
+        match = _VTT_TIME_PATTERN_LONG.search(time_line)
         if not match:
-            match = re.search(r"(\d{2}:\d{2})[.,](\d{3})\s*-->\s*(\d{2}:\d{2})[.,](\d{3})", time_line)
+            match = _VTT_TIME_PATTERN_SHORT.search(time_line)
             if match:
                 t1, m1, t2, m2 = match.groups()
                 srt_time_line = f"00:{t1},{m1} --> 00:{t2},{m2}"
