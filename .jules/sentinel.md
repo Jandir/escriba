@@ -24,3 +24,7 @@
 **Vulnerability:** Indefinite hangs caused by external processes (e.g., yt-dlp) lacking strict timeouts in `escriba.py`.
 **Learning:** Even expected long-running external processes can hang indefinitely due to network issues or unexpected behavior, leading to resource exhaustion (DoS).
 **Prevention:** Enforced a strict 3600-second timeout on `subprocess.run` and handled `subprocess.TimeoutExpired` exceptions.
+## 2025-03-05 - [Mitigating DoS Risks via Watchdog Timeouts in streaming subprocesses]
+**Vulnerability:** Indefinite hangs caused by external processes (e.g., yt-dlp) lacking strict timeouts in streaming `subprocess.Popen` reads.
+**Learning:** `subprocess.Popen.wait(timeout)` is useless for streaming `subprocess.Popen.stdout` iteration because the I/O read blocking operations will hang indefinitely without reaching the `wait()` call. Using a `threading.Timer` on every line is resource intensive and causes thread exhaustion.
+**Prevention:** Used a background daemon thread (watchdog) and a shared monotonic time array to enforce a strict timeout by killing the hanging process if stdout is blocked for over 60 seconds.
