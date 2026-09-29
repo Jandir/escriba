@@ -4,6 +4,8 @@ import subprocess
 import json
 import shutil
 import re
+import threading
+import time
 from enum import IntEnum
 from pathlib import Path
 from collections import Counter
@@ -255,11 +257,23 @@ def generate_fast_list_json(
         ]
         
         try:
+            last_output_time = [time.monotonic()]
+
             with subprocess.Popen(
                 cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8"
             ) as process_obj:
+                def _watchdog() -> None:
+                    while process_obj.poll() is None:
+                        if time.monotonic() - last_output_time[0] > 60:
+                            process_obj.kill()
+                            break
+                        time.sleep(1)
+
+                threading.Thread(target=_watchdog, daemon=True).start()
+
                 if process_obj.stdout:
                     for line_str in process_obj.stdout:
+                        last_output_time[0] = time.monotonic()
                         stripped_line = line_str.strip()
                         if not stripped_line:
                             continue
