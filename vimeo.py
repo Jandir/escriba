@@ -2,6 +2,8 @@ import json
 import os
 import re
 import shutil
+import time
+import threading
 import subprocess
 import sys
 from collections import Counter
@@ -234,6 +236,8 @@ def generate_fast_list_json(
     videos_found_list: list[dict[str, Any]] = []
     consecutive_known_count_int: int = 0
 
+    last_output_time = [time.monotonic()]
+
     try:
         with subprocess.Popen(
             cmd_list,
@@ -242,8 +246,19 @@ def generate_fast_list_json(
             text=True,
             encoding="utf-8"
         ) as process_obj:
+            def watcher():
+                while process_obj.poll() is None:
+                    if time.monotonic() - last_output_time[0] > 60:
+                        process_obj.terminate()
+                        break
+                    time.sleep(1)
+
+            watcher_thread = threading.Thread(target=watcher, daemon=True)
+            watcher_thread.start()
+
             if process_obj.stdout:
                 for line_str in process_obj.stdout:
+                    last_output_time[0] = time.monotonic()
                     record_dict: dict[str, Any] | None = _parse_vimeo_video_record(
                         line_str, channel_url_str, history_dict
                     )

@@ -1,5 +1,7 @@
 import os
 import sys
+import time
+import threading
 import subprocess
 import json
 import shutil
@@ -254,12 +256,25 @@ def generate_fast_list_json(
             current_url
         ]
         
+        last_output_time = [time.monotonic()]
+
         try:
             with subprocess.Popen(
                 cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8"
             ) as process_obj:
+                def watcher():
+                    while process_obj.poll() is None:
+                        if time.monotonic() - last_output_time[0] > 60:
+                            process_obj.terminate()
+                            break
+                        time.sleep(1)
+
+                watcher_thread = threading.Thread(target=watcher, daemon=True)
+                watcher_thread.start()
+
                 if process_obj.stdout:
                     for line_str in process_obj.stdout:
+                        last_output_time[0] = time.monotonic()
                         stripped_line = line_str.strip()
                         if not stripped_line:
                             continue
