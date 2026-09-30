@@ -36,3 +36,6 @@
 ## 2024-09-17 - Tuple-based suffix matching vs generator loop
 **Learning:** Using `endswith` with a tuple of suffixes and exact matching via `in` with a tuple is ~6x faster than evaluating a generator expression with string concatenation inside `any()` for matching cookie domains.
 **Action:** Prefer `in` and `.endswith()` with tuples for performance-sensitive string matching rather than loops or generators.
+## 2024-05-24 - Single scandir pass vs multiple globs
+**Learning:** Calling `Path.glob` multiple times creates redundant file system iterations and instantiates many unnecessary `Path` objects.
+**Action:** Use a single `os.scandir` loop and check `entry.name.endswith()` with a tuple of extensions to optimize directory scanning.

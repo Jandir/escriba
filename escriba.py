@@ -1106,29 +1106,26 @@ def srt_to_md(
     return md_file_path
 
 
-def _cleanup_by_patterns(cwd_path: Path, patterns: list[str]) -> int:
-    """Remove arquivos baseados em padrões de glob."""
-    cleaned_int = 0
-    for pattern_str in patterns:
-        for temp_file_path in cwd_path.glob(pattern_str):
-            try:
-                temp_file_path.unlink()
-                cleaned_int += 1
-            except OSError:
-                pass
-    return cleaned_int
-
-
 def cleanup_temp_files(cwd_path: Path, channel_dir_name: str) -> int:
     """Remove arquivos temporários deixados pelo yt-dlp."""
-    cleaned_int = _cleanup_by_patterns(cwd_path, ["*.part", "*.ytdl", "*.temp", "*.tmp"])
+    cleaned_int = 0
+    # BOLT OPTIMIZATION: Use os.scandir in a single pass instead of multiple Path.glob calls
+    temp_exts = (".part", ".ytdl", ".temp", ".tmp")
+    info_prefix = f"{channel_dir_name}-"
+    info_suffix = ".info.json"
 
-    for info_file_path in cwd_path.glob(f"{channel_dir_name}-*.info.json"):
-        try:
-            info_file_path.unlink()
-            cleaned_int += 1
-        except OSError:
-            pass
+    try:
+        with os.scandir(cwd_path) as it:
+            for entry in it:
+                if entry.is_file():
+                    if entry.name.endswith(temp_exts) or (entry.name.startswith(info_prefix) and entry.name.endswith(info_suffix)):
+                        try:
+                            os.unlink(entry.path)
+                            cleaned_int += 1
+                        except OSError:
+                            pass
+    except OSError:
+        pass
 
     if cleaned_int > 0:
         print_info(f"{DIM}Cleanup: {cleaned_int} arquivo(s) temporário(s) removido(s){RESET}")
