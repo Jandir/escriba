@@ -2,6 +2,8 @@ import os
 import sys
 import subprocess
 import json
+import time
+import threading
 import shutil
 import re
 from enum import IntEnum
@@ -258,8 +260,21 @@ def generate_fast_list_json(
             with subprocess.Popen(
                 cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8"
             ) as process_obj:
+
+                last_output_time = [time.monotonic()]
+
+                def watchdog():
+                    while process_obj.poll() is None:
+                        if time.monotonic() - last_output_time[0] > 60:
+                            process_obj.kill()
+                            break
+                        time.sleep(1)
+
+                threading.Thread(target=watchdog, daemon=True).start()
+
                 if process_obj.stdout:
                     for line_str in process_obj.stdout:
+                        last_output_time[0] = time.monotonic()
                         stripped_line = line_str.strip()
                         if not stripped_line:
                             continue
@@ -299,7 +314,11 @@ def generate_fast_list_json(
                         sys.stdout.write(f"\r{ICON_WAIT}  {BCYAN}Vídeos mapeados: {len(videos_found_list)}{RESET}")
                         sys.stdout.flush()
                 
-                process_obj.wait()
+                try:
+                    process_obj.wait(timeout=60)
+                except subprocess.TimeoutExpired:
+                    process_obj.kill()
+                    process_obj.wait()
                 print()
                 
                 if process_obj.returncode != 0 and not videos_found_list and not (stop_at_ids and process_obj.returncode == -15):

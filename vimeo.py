@@ -4,6 +4,8 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+import threading
 from collections import Counter
 from enum import IntEnum
 from pathlib import Path
@@ -242,8 +244,21 @@ def generate_fast_list_json(
             text=True,
             encoding="utf-8"
         ) as process_obj:
+
+            last_output_time = [time.monotonic()]
+
+            def watchdog():
+                while process_obj.poll() is None:
+                    if time.monotonic() - last_output_time[0] > 60:
+                        process_obj.kill()
+                        break
+                    time.sleep(1)
+
+            threading.Thread(target=watchdog, daemon=True).start()
+
             if process_obj.stdout:
                 for line_str in process_obj.stdout:
+                    last_output_time[0] = time.monotonic()
                     record_dict: dict[str, Any] | None = _parse_vimeo_video_record(
                         line_str, channel_url_str, history_dict
                     )
@@ -265,7 +280,11 @@ def generate_fast_list_json(
                     )
                     sys.stdout.flush()
 
-            process_obj.wait()
+            try:
+                process_obj.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                process_obj.kill()
+                process_obj.wait()
             print()
 
             if process_obj.returncode != 0 and not videos_found_list and not (stop_at_ids and process_obj.returncode == -15):
