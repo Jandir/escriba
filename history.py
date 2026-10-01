@@ -1,3 +1,4 @@
+import os
 import json
 import re
 from pathlib import Path
@@ -37,11 +38,15 @@ def _find_legacy_databases(cwd_path: Path) -> List[Path]:
     - O comando `x_path.stat().st_mtime` nos dá a data e segundo exatos em formato de 'timestamp Epoch'
       em que o arquivo foi modificado pelo sistema operacional.
     """
-    patterns_list: List[str] = ["escriba_*.json", "lista_*.json"]
     found_paths_list: List[Path] = []
     
-    for pattern_str in patterns_list:
-        found_paths_list.extend(list(cwd_path.glob(pattern_str)))
+    try:
+        with os.scandir(cwd_path) as it:
+            for entry in it:
+                if entry.name.endswith(".json") and (entry.name.startswith("escriba_") or entry.name.startswith("lista_")):
+                    found_paths_list.append(Path(entry.path))
+    except OSError:
+        pass
     
     def _safe_mtime(x_path: Path) -> float:
         try:
@@ -87,11 +92,14 @@ def _get_history_search_dirs(cwd_path: Path) -> List[Path]:
     """
     try:
         ignore_names_set: set[str] = {".git", ".venv", "__pycache__"}
-        # List Comprehension: Cria uma lista filtrando pastas no disco que não estejam no conjunto ignorado ou terminando com .bak/.backup.
-        return [cwd_path] + [
-            d_path for d_path in cwd_path.iterdir() 
-            if d_path.is_dir() and d_path.name not in ignore_names_set and not d_path.name.endswith(".bak") and not d_path.name.endswith(".backup")
-        ]
+        search_dirs: List[Path] = [cwd_path]
+
+        with os.scandir(cwd_path) as it:
+            for entry in it:
+                if entry.is_dir() and entry.name not in ignore_names_set and not entry.name.endswith((".bak", ".backup")):
+                    search_dirs.append(Path(entry.path))
+
+        return search_dirs
     except Exception:
         # Se ocorrer erro de permissão ao ler alguma pasta, retorna apenas a pasta principal (cwd)
         return [cwd_path]
@@ -133,7 +141,11 @@ def _scan_directory_for_history(
     Dividido em duas etapas para garantir integridade e performance de leitura.
     """
     try:
-        json_files_list: List[Path] = list(directory_path.glob("*.json"))
+        json_files_list: List[Path] = []
+        with os.scandir(directory_path) as it:
+            for entry in it:
+                if entry.name.endswith(".json"):
+                    json_files_list.append(Path(entry.path))
         
         # 1. Primeiro processamos os bancos de dados mestre (escriba_ ou lista_)
         # Isso garante que history_map_dict já contenha a maior base de dados conhecida em memória rápida.
