@@ -216,13 +216,18 @@ def extract_video_id(filename_or_path: str) -> str:
     # opcionalmente seguido de outro traço e mais 2 ou 3 letras, ancorado no final da string ($).
     name = _LANG_PATTERN.sub('', name)
     
-    # 3. Verifica se o final do nome restante é um ID legítimo do YouTube (11 caracteres de padrão fixo)
+    # 3. Verifica se contém ID de blog (art_[hash])
+    blog_match = re.search(r'(art_[a-f0-9]{12})', name)
+    if blog_match:
+        return blog_match.group(1)
+
+    # 4. Verifica se o final do nome restante é um ID legítimo do YouTube (11 caracteres de padrão fixo)
     if len(name) >= 11:
         candidate: str = name[-11:]
         if _YT_ID_PATTERN.match(candidate):
             return candidate
             
-    # 4. Caso não esteja na ponta (Vimeo ou nomes alterados), varremos toda a string por grupos de 11 caracteres.
+    # 5. Caso não esteja na ponta (Vimeo ou nomes alterados), varremos toda a string por grupos de 11 caracteres.
     matches: List[str] = _YT_ID_SEARCH_PATTERN.findall(name)
     if matches:
         # Percorremos a lista ao contrário para priorizar o ID mais próximo do fim do arquivo

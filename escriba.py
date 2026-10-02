@@ -154,6 +154,7 @@ from utils import (
     print_skip,
     print_warn,
 )
+import blog
 import vimeo
 from vimeo import filter_vimeo_cookies
 import youtube
@@ -832,11 +833,15 @@ def assemble_segments(
 
 
 def get_provider(url: str) -> str:
-    """Retorna 'vimeo' ou 'youtube' baseado na URL."""
+    """Retorna 'vimeo', 'blog' ou 'youtube' baseado na URL ou ID."""
     if not url:
         return "youtube"
     if "vimeo.com" in url or re.match(r"^\d+$", url):
         return "vimeo"
+    if url.startswith("art_"):
+        return "blog"
+    if (url.startswith("http://") or url.startswith("https://")) and not ("youtube.com" in url or "youtu.be" in url):
+        return "blog"
     return "youtube"
 
 
@@ -869,6 +874,8 @@ def generate_md_header(
     provider = get_provider(video_id)
     if provider == "vimeo":
         url = f"https://vimeo.com/{video_id}"
+    elif provider == "blog":
+        url = video_id if video_id.startswith("http") else f"blog:{video_id}"
     else:
         url = f"https://youtube.com/watch?v={video_id}"
 
@@ -1383,21 +1390,22 @@ def parse_args() -> argparse.Namespace:
 def _get_cli_description() -> str:
     """Retorna a string de descrição longa da CLI."""
     return (
-        "Baixa legendas de todos os vídeos de um canal ou playlist do YouTube/Vimeo.\n"
+        "Baixa legendas e artigos de canais/playlists do YouTube, Vimeo e Blogs/RSS.\n"
         f"Versão: {VERSION}\n\n"
         "Substituições: Aplica regras de limpeza de termos (Ekklezia) usando arquivos\n"
         "'rules.txt' na pasta raiz do script e/ou na pasta atual (CWD).\n"
         "Formato: 'Termo Original, Termo Novo' ou 'Original=Novo'.\n\n"
-        "Padrão: [NOME_DA_PASTA]-[ID_VIDEO]-[LANG].srt\n"
-        "Vídeos sem legenda são registrados no JSON de estado e ignorados automaticamente."
+        "Padrão: [NOME_DA_PASTA]-[ID_VIDEO]-[LANG].srt / .md\n"
+        "Vídeos/Artigos processados são registrados no JSON de estado e sincronizados automaticamente."
     )
 
 
 def _add_core_args(parser_obj: argparse.ArgumentParser) -> None:
-    """Adiciona argumentos principais (alvo, idioma, formato)."""
-    parser_obj.add_argument("canal", nargs="*", default=None, help="Canal, playlist, vídeo ou URL (YouTube ou Vimeo)")
-    parser_obj.add_argument("-l", "--lang", default="", metavar="LANG", help="Idioma das legendas (ex: pt, en). Padrão: idioma nativo do canal")
-    parser_obj.add_argument("-m", "--md", action="store_true", default=True, help="Exporta legendas em .md segmentado por IA via TF-IDF (Padrão: Ativo)")
+    """Adiciona argumentos principais (alvo, idioma, formato, provedor)."""
+    parser_obj.add_argument("canal", nargs="*", default=None, help="Canal, playlist, vídeo, feed RSS ou blog URL")
+    parser_obj.add_argument("--provider", choices=["auto", "youtube", "vimeo", "blog"], default="auto", help="Força provedor específico (Padrão: auto)")
+    parser_obj.add_argument("-l", "--lang", default="", metavar="LANG", help="Idioma das legendas/artigos (ex: pt, en). Padrão: idioma nativo do canal/feed")
+    parser_obj.add_argument("-m", "--md", action="store_true", default=True, help="Exporta conteúdo em .md estruturado (Padrão: Ativo)")
     parser_obj.add_argument("--no-md", action="store_false", dest="md", help="Desativa a exportação em .md")
     parser_obj.add_argument("--keep-srt", action="store_true", help="Mantém o arquivo .srt no disco após a conversão para .md")
 
@@ -1451,11 +1459,14 @@ def _try_parse_video_input(input_str: str) -> tuple[str, str, str] | None:
     if VIMEO_ID_REGEX_PATTERN.match(input_str):
         return f"https://vimeo.com/{input_str}", "video", input_str
 
+    if input_str.startswith("art_"):
+        return input_str, "video", input_str
+
     return None
 
 
 def parse_input_type(channel_input_str: str) -> tuple[str, str, str]:
-    """Detecta o tipo de entrada (vídeo, playlist ou canal)."""
+    """Detecta o tipo de entrada (vídeo, playlist, canal ou blog)."""
     vid_res = _try_parse_video_input(channel_input_str)
     if vid_res:
         return vid_res
@@ -1463,6 +1474,9 @@ def parse_input_type(channel_input_str: str) -> tuple[str, str, str]:
     if "vimeo.com" in channel_input_str:
         if "/showcase/" in channel_input_str or "/channels/" in channel_input_str:
             return channel_input_str, "playlist", ""
+        return channel_input_str, "channel", ""
+
+    if (channel_input_str.startswith("http://") or channel_input_str.startswith("https://")) and not ("youtube.com" in channel_input_str or "youtu.be" in channel_input_str):
         return channel_input_str, "channel", ""
 
     if "list=" in channel_input_str or "/playlist/" in channel_input_str:
@@ -1474,8 +1488,13 @@ def parse_input_type(channel_input_str: str) -> tuple[str, str, str]:
 
 
 def _get_provider_module(url_str: str) -> Any:
-    """Retorna o módulo (youtube ou vimeo) baseado na URL."""
-    return vimeo if get_provider(url_str) == "vimeo" else youtube
+    """Retorna o módulo (youtube, vimeo ou blog) baseado na URL."""
+    provider_name = get_provider(url_str)
+    if provider_name == "vimeo":
+        return vimeo
+    if provider_name == "blog":
+        return blog
+    return youtube
 
 
 def _infer_canal_from_json(json_data_dict: dict[str, Any], json_name_str: str) -> str | None:
@@ -1483,8 +1502,10 @@ def _infer_canal_from_json(json_data_dict: dict[str, Any], json_name_str: str) -
     canal_str = (
         json_data_dict.get("youtube_channels", [None])[0]
         or json_data_dict.get("vimeo_channels", [None])[0]
+        or json_data_dict.get("blog_channels", [None])[0]
         or json_data_dict.get("youtube_channel")
         or json_data_dict.get("vimeo_channel")
+        or json_data_dict.get("blog_channel")
         or json_data_dict.get("channel")
         or json_data_dict.get("channel_context")
     )
@@ -1604,6 +1625,9 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
 
     _print_session_info(cli_args, latest_json_path)
 
+    explicit_provider = getattr(cli_args, "provider", "auto")
+    provider_str = explicit_provider if explicit_provider != "auto" else get_provider(url_str)
+
     return SessionConfig(
         cwd_path=cwd_path,
         channel_dir_name=cwd_path.name,
@@ -1612,7 +1636,7 @@ def setup_session(cli_args: argparse.Namespace) -> SessionConfig:
         channel_input_url_or_handle=cli_args.canal,
         channel_url=url_str,
         discovered_uploader_id=_resolve_uploader_id(cli_args.canal, url_str),
-        provider=get_provider(url_str),
+        provider=provider_str,
         browser_name=getattr(cli_args, "browser", "firefox"),
     )
 
@@ -2134,17 +2158,33 @@ def _download_and_process_single(
     pending: list[tuple[Path, str, str, str]],
     dirty: list[int],
 ) -> int:
-    """Realiza o download e processamento pós-download de um vídeo único."""
-    print_dl(f"{video_dict['video_id']}{RESET}  {DIM}legenda/{lang}{RESET}", prefix)
+    """Realiza o download e processamento pós-download de um vídeo ou artigo único."""
+    provider_name = get_provider(conf.channel_url)
+    target_type_label = "artigo" if provider_name == "blog" else f"legenda/{lang}"
+    print_dl(f"{video_dict['video_id']}{RESET}  {DIM}{target_type_label}{RESET}", prefix)
     provider_mod = _get_provider_module(conf.channel_url)
-    exit_code = provider_mod.download_video(
-        conf.yt_dlp_cmd_list,
-        cookies,
-        video_dict["video_id"],
-        lang,
-        conf.channel_dir_name,
-        download_video_only_hd=getattr(args, "download_video", False),
-    )
+
+    if provider_name == "blog":
+        exit_code = provider_mod.download_video(
+            conf.yt_dlp_cmd_list,
+            cookies,
+            video_dict["video_id"],
+            lang,
+            conf.channel_dir_name,
+            download_video_only_hd=False,
+            article_url_str=video_dict.get("url", ""),
+            title_str=video_dict.get("title", ""),
+            publish_date_str=video_dict.get("publish_date", "Desconhecida"),
+        )
+    else:
+        exit_code = provider_mod.download_video(
+            conf.yt_dlp_cmd_list,
+            cookies,
+            video_dict["video_id"],
+            lang,
+            conf.channel_dir_name,
+            download_video_only_hd=getattr(args, "download_video", False),
+        )
 
     if getattr(sys, "_escriba_interrupted", False):
         raise KeyboardInterrupt
@@ -2152,6 +2192,12 @@ def _download_and_process_single(
     _update_metadata_from_json(conf, video_dict, dirty)
 
     if exit_code == 0:
+        if provider_name == "blog":
+            video_dict["subtitle_downloaded"] = True
+            video_dict["has_no_subtitle"] = False
+            dirty[0] += 1
+            print_ok("artigo salvo em .md", prefix)
+            return 1
         return _handle_post_download(conf, video_dict, args, pending, prefix, dirty, lambda: None)
 
     _handle_download_failure(exit_code, args, prefix)
@@ -2805,6 +2851,7 @@ def exibir_status_canais_json() -> None:
                 "idioma_detectado": data.get("detected_language") if isinstance(data, dict) else None,
                 "canais_youtube": data.get("youtube_channels", []) if isinstance(data, dict) else [],
                 "canais_vimeo": data.get("vimeo_channels", []) if isinstance(data, dict) else [],
+                "canais_blog": data.get("blog_channels", []) if isinstance(data, dict) else [],
                 "estatisticas": {
                     "total_videos": total_videos,
                     "baixados": downloaded,
@@ -2874,12 +2921,15 @@ def _get_channels_to_sync(json_path: Path, user_canal_str: str | None) -> list[s
         data_dict = json.loads(json_path.read_text(encoding="utf-8"))
         yt_chans = data_dict.get("youtube_channels", [])
         vi_chans = data_dict.get("vimeo_channels", [])
+        bl_chans = data_dict.get("blog_channels", [])
 
         all_chans: list[str] = []
         if isinstance(yt_chans, list):
             all_chans.extend(yt_chans)
         if isinstance(vi_chans, list):
             all_chans.extend(vi_chans)
+        if isinstance(bl_chans, list):
+            all_chans.extend(bl_chans)
 
         return _deduplicate_channel_list(all_chans)
     except (json.JSONDecodeError, OSError):

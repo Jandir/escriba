@@ -407,7 +407,9 @@ def _extract_md_transcription(md_content_str: str) -> str:
             body_content_str = marker_str + yaml_stripped_str.split(marker_str, 1)[1]
             break
             
-    return (header_block_str + "\n\n" + body_content_str).strip() if header_block_str else body_content_str
+    if header_block_str and not body_content_str.startswith("# "):
+        return (header_block_str + "\n\n" + body_content_str).strip()
+    return body_content_str.strip()
 
 
 def _get_md_header_block(text_str: str, level: int = 1) -> Optional[str]:

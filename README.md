@@ -132,6 +132,7 @@ graph LR
 * `rules.py`: Motor de pontuação acústica, limpeza de artefatos ASR (`♪`, `[Música]`) e substituição de termos.
 * `youtube.py`: Abstração de rede, resolução de canal e orquestração do `yt-dlp` para YouTube.
 * `vimeo.py`: Módulo especializado para extração e mapeamento de canais Vimeo.
+* `blog.py`: Módulo provedor de Blog com suporte a feeds RSS/Atom e extração de artigos HTML para Markdown.
 * `history.py`: Gestão de estado atômico e persistência JSON (`escriba_[canal].json`).
 * `utils.py`: Design visual de CLI, badges, cores e utilitários de sistema.
 * `convert_all_bases.py`: Utilitário para descoberta e conversão massiva de diretórios de canais.
@@ -196,11 +197,12 @@ O `[ALVO]` pode ser um identificador de canal (`@Canal`), URL completa de canal,
 
 ### Tabela de Parâmetros da Linha de Comando
 
-| Argumento | Tipo | Descrição |
+| Argument | Tipo | Descrição |
 | :--- | :--- | :--- |
-| `canal` | Posicional | Canal (`@nome`), playlist, vídeo único ou URL (YouTube ou Vimeo). |
-| `-l`, `--lang` | String | Idioma das legendas (ex: `pt`, `en`, `es`). *Padrão: idioma nativo do canal*. |
-| `-m`, `--md` | Flag | Exporta legendas em `.md` segmentado semanticamente por IA (*Padrão: Ativo*). |
+| `canal` | Posicional | Canal (`@nome`), playlist, vídeo único, URL (YouTube/Vimeo) ou feed/blog URL. |
+| `--provider` | Escolha | Força provedor específico: `auto`, `youtube`, `vimeo`, `blog` (*Padrão: auto*). |
+| `-l`, `--lang` | String | Idioma das legendas/artigos (ex: `pt`, `en`, `es`). *Padrão: idioma nativo do canal/feed*. |
+| `-m`, `--md` | Flag | Exporta legendas/artigos em `.md` segmentado semanticamente (*Padrão: Ativo*). |
 | `--no-md` | Flag | Desativa a exportação em `.md` (mantém apenas `.srt`). |
 | `--keep-srt` | Flag | Mantém os arquivos `.srt` originais no disco após a conversão para `.md`. |
 | `-d`, `--date` | `YYYYMMDD` | Filtra vídeos com data de publicação posterior à informada (ex: `20260101`). |
@@ -231,17 +233,22 @@ python escriba.py @CanalExemplo
 # 2. Processar canal especificando o Firefox para autenticação com modo rápido
 python escriba.py @CanalExemplo -b firefox -f
 
-# 3. Baixar apenas vídeos recentes (a partir de 01/01/2026) com limite de 10 vídeos
+# 3. Baixar artigos de um Blog via Feed RSS/Atom ou URL do blog com Smart Sync
+python escriba.py "https://meublog.com/feed"
+python escriba.py "https://meublog.com" --provider blog
+
+# 4. Baixar apenas vídeos recentes (a partir de 01/01/2026) com limite de 10 vídeos
 python escriba.py @CanalExemplo -d 20260101 --limit 10
 
-# 4. Processar um vídeo avulso do YouTube ou Vimeo
+# 5. Processar um vídeo avulso do YouTube ou Vimeo ou artigo avulso
 python escriba.py "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 python escriba.py "https://vimeo.com/123456789"
+python escriba.py "https://meublog.com/artigo-profundo" --provider blog
 
-# 5. Baixar o vídeo original Full HD (1080p sem áudio)
+# 6. Baixar o vídeo original Full HD (1080p sem áudio)
 python escriba.py "https://www.youtube.com/watch?v=dQw4w9WgXcQ" -dv
 
-# 6. Consolidar a pasta atual em volumes para o NotebookLM (2.4MB por volume)
+# 7. Consolidar a pasta atual em volumes para o NotebookLM (2.4MB por volume)
 python escriba.py --consolidar
 
 # No Windows PowerShell (usando o script utilitário):
@@ -250,10 +257,10 @@ python escriba.py --consolidar
 # Para resetar e reprocessar todos os volumes do zero:
 .\juntar.ps1 --reset
 
-# 7. Exibir relatório de status de todos os canais indexados na pasta atual
+# 8. Exibir relatório de status de todos os canais indexados na pasta atual
 python escriba.py --status
 
-# 8. Regenerar todos os arquivos .md da pasta a partir dos .srt locais (offline)
+# 9. Regenerar todos os arquivos .md da pasta a partir dos .srt locais (offline)
 python escriba.py --regen-md --force
 ```
 
