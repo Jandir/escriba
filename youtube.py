@@ -105,7 +105,7 @@ def setup_environment() -> tuple[Path, list[str]]:
         yt_dlp_cmd_list.extend(["--js-runtimes", f"node:{NODE_PATH_STR}"])
         
     # Client impersonation para maximizar o bypass de bloqueios
-    yt_dlp_cmd_list.extend(["--client", "ios"])
+    yt_dlp_cmd_list.extend(["--extractor-args", "youtube:client=ios"])
         
     return script_dir_path_obj, yt_dlp_cmd_list
 
