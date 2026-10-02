@@ -64,19 +64,17 @@ def _refresh_cookies_on_error(
     browser_str: str = DEFAULT_BROWSER
 ) -> list[str]:
     """
-    Técnica de Auto-Cura (Auto-Healing): Se o YouTube bloquear o acesso (erro HTTP 403),
-    nós apagamos os cookies locais expirados e extraímos credenciais frescas do navegador.
+    Técnica de Auto-Cura (Auto-Healing) / Fallback: Se o YouTube bloquear o acesso (erro HTTP 403)
+    ou se os cookies do navegador falharem, deletamos os cookies locais expirados e 
+    fazemos fallback para a autenticação OAuth2 do yt-dlp.
     """
-    print_warn("Erro ao acessar YouTube. Tentando corrigir cookies automaticamente...")
+    print_warn("Erro ao acessar YouTube. Fazendo fallback para autenticação OAuth2...")
+    print_info("ATENÇÃO: Se for a primeira vez, o yt-dlp pausará e pedirá para você acessar google.com/device e inserir um código.")
     cookies_path_obj: Path = cwd_path_obj / "cookies.txt"
     cookies_path_obj.unlink(missing_ok=True)
-    return configure_cookies(
-        cwd_path_obj, 
-        script_dir_path_obj, 
-        force_refresh_bool=True, 
-        silent_bool=True, 
-        browser_str=browser_str
-    )
+    
+    # Em vez de tentar extrair do navegador de novo, usamos OAuth2.
+    return ["--username", "oauth2", "--password", ""]
 
 
 def _get_python_executable(script_dir_path_obj: Path) -> Path:
@@ -105,6 +103,9 @@ def setup_environment() -> tuple[Path, list[str]]:
     
     if NODE_PATH_STR:
         yt_dlp_cmd_list.extend(["--js-runtimes", f"node:{NODE_PATH_STR}"])
+        
+    # Client impersonation para maximizar o bypass de bloqueios
+    yt_dlp_cmd_list.extend(["--client", "ios"])
         
     return script_dir_path_obj, yt_dlp_cmd_list
 
