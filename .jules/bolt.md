@@ -39,3 +39,6 @@
 ## 2026-11-20 - Fast directory traversal with os.scandir in history logic
 **Learning:** Codebase performance pattern: When traversing directories for specific files, replacing `Path.glob()` and `Path.iterdir()` with `os.scandir()` significantly reduces overhead by avoiding redundant filesystem calls and object instantiations, proving up to 3-5x faster during file scans.
 **Action:** Replace `Path.glob()` and `Path.iterdir()` with `os.scandir()` for faster directory traversal, especially in performance-sensitive modules like `history.py` which are scanned frequently.
+## 2024-05-24 - Single `os.scandir` pass for cleanup
+**Learning:** Codebase performance pattern: When scanning a directory to filter or categorize files based on multiple prefixes/suffixes (like cleaning up multiple temporary file extensions), avoid calling `Path.glob` multiple times. Instead, use a single `os.scandir` loop and check `entry.name.endswith()` with a tuple of extensions. This avoids redundant system calls and `Path` object instantiations, significantly speeding up hot paths.
+**Action:** Use a single `os.scandir` loop coupled with string matching instead of multiple `glob` iterations when looking for files matching multiple specific criteria in a directory.
