@@ -4,6 +4,8 @@ import subprocess
 import json
 import shutil
 import re
+import time
+import threading
 from enum import IntEnum
 from pathlib import Path
 from collections import Counter
@@ -258,8 +260,20 @@ def generate_fast_list_json(
             with subprocess.Popen(
                 cmd_list, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8"
             ) as process_obj:
+                last_output_time = [time.monotonic()]
+
+                def _watchdog() -> None:
+                    while process_obj.poll() is None:
+                        if time.monotonic() - last_output_time[0] > 60.0:
+                            process_obj.kill()
+                            break
+                        time.sleep(1.0)
+
+                threading.Thread(target=_watchdog, daemon=True).start()
+
                 if process_obj.stdout:
                     for line_str in process_obj.stdout:
+                        last_output_time[0] = time.monotonic()
                         stripped_line = line_str.strip()
                         if not stripped_line:
                             continue
@@ -536,7 +550,9 @@ def filter_youtube_cookies(cookies_path_obj: Path) -> None:
             lines_list: list[str] = file_descriptor_obj.readlines()
 
         filtered_lines_list: list[str] = []
-        allowed_domains = ["youtube.com", "google.com"]
+        # Bolt: Optimize domain matching using tuples and exact/suffix checks
+        allowed_exact = ("youtube.com", "google.com")
+        allowed_suffix = (".youtube.com", ".google.com")
         for line_str in lines_list:
             if line_str.startswith("#") and not line_str.startswith("#HttpOnly_"):
                 filtered_lines_list.append(line_str)
@@ -546,10 +562,8 @@ def filter_youtube_cookies(cookies_path_obj: Path) -> None:
             parts = cookie_line.split("\t")
             if parts:
                 domain = parts[0].strip()
-                for allowed in allowed_domains:
-                    if domain.endswith("." + allowed) or domain == allowed:
-                        filtered_lines_list.append(line_str)
-                        break
+                if domain in allowed_exact or domain.endswith(allowed_suffix):
+                    filtered_lines_list.append(line_str)
 
         with open(cookies_path_obj, "w", encoding="utf-8") as file_descriptor_obj:
             file_descriptor_obj.writelines(filtered_lines_list)
