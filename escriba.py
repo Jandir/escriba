@@ -170,6 +170,10 @@ VIDEO_ID_REGEX_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 VIMEO_ID_REGEX_PATTERN = re.compile(r"^\d{7,12}$")
 _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 
+# BOLT OPTIMIZATION: Global pre-compiled regexes for VTT to SRT hot paths
+_VTT_TIME_PATTERN_1 = re.compile(r"(\d{2}:\d{2}:\d{2})[.,](\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2})[.,](\d{3})")
+_VTT_TIME_PATTERN_2 = re.compile(r"(\d{2}:\d{2})[.,](\d{3})\s*-->\s*(\d{2}:\d{2})[.,](\d{3})")
+
 # Carrega variáveis do .env (localizado no diretório do script)
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -1235,9 +1239,9 @@ def convert_vtt_to_srt(vtt_path: Path) -> Path:
         time_line = lines[time_line_idx]
         text_lines = lines[time_line_idx + 1:]
 
-        match = re.search(r"(\d{2}:\d{2}:\d{2})[.,](\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2})[.,](\d{3})", time_line)
+        match = _VTT_TIME_PATTERN_1.search(time_line)
         if not match:
-            match = re.search(r"(\d{2}:\d{2})[.,](\d{3})\s*-->\s*(\d{2}:\d{2})[.,](\d{3})", time_line)
+            match = _VTT_TIME_PATTERN_2.search(time_line)
             if match:
                 t1, m1, t2, m2 = match.groups()
                 srt_time_line = f"00:{t1},{m1} --> 00:{t2},{m2}"
