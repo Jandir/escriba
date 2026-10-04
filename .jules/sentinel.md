@@ -24,3 +24,7 @@
 **Vulnerability:** Indefinite hangs caused by external processes (e.g., yt-dlp) lacking strict timeouts in `escriba.py`.
 **Learning:** Even expected long-running external processes can hang indefinitely due to network issues or unexpected behavior, leading to resource exhaustion (DoS).
 **Prevention:** Enforced a strict 3600-second timeout on `subprocess.run` and handled `subprocess.TimeoutExpired` exceptions.
+## 2025-03-05 - [YAML Injection in Blog Frontmatter Generator]
+**Vulnerability:** The blog module only escaped double quotes (`"` to `\"`) when injecting the article title into the YAML frontmatter payload (`blog.py`, `convert_html_to_clean_markdown`).
+**Learning:** Constructing YAML templates via unescaped string interpolation is vulnerable to injection if the string context is broken (e.g., via a trailing backslash escaping the closing quote, or via newlines). This mirrors the earlier vulnerability found in the PEP-750 template string renderer (`escriba.py`).
+**Prevention:** When injecting strings into a double-quoted context in YAML, always escape backslashes first (`\\`), followed by newlines (`\n`), carriage returns (`\r`), and finally double quotes (`\"`).
