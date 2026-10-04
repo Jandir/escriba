@@ -39,3 +39,7 @@
 ## 2026-11-20 - Fast directory traversal with os.scandir in history logic
 **Learning:** Codebase performance pattern: When traversing directories for specific files, replacing `Path.glob()` and `Path.iterdir()` with `os.scandir()` significantly reduces overhead by avoiding redundant filesystem calls and object instantiations, proving up to 3-5x faster during file scans.
 **Action:** Replace `Path.glob()` and `Path.iterdir()` with `os.scandir()` for faster directory traversal, especially in performance-sensitive modules like `history.py` which are scanned frequently.
+
+## 2026-10-04 - Pre-compiling Regex in NLP Hot Paths
+**Learning:** Python's `re` module caches compiled regex patterns internally, but invoking functions like `re.match()` and `re.search()` directly with string literals inside loops (e.g., iterating through large JSON history objects or processing thousands of subtitle lines) still incurs unnecessary dictionary lookup overhead for the cache.
+**Action:** Extract frequently used regular expressions and assign them to module-level global variables via `re.compile()` (e.g., `_PATTERN = re.compile(r"...")`). Use the compiled object's methods (`_PATTERN.match()`, `_PATTERN.search()`) directly to eliminate compilation cache lookup overhead in performance-sensitive sections.
