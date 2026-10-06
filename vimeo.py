@@ -279,7 +279,11 @@ def generate_fast_list_json(
                     )
                     sys.stdout.flush()
 
-            process_obj.wait()
+            try:
+                process_obj.wait(timeout=3600)
+            except subprocess.TimeoutExpired:
+                process_obj.kill()
+                process_obj.wait()
             print()
 
             if process_obj.returncode != 0 and not videos_found_list and not (stop_at_ids and process_obj.returncode == -15):
