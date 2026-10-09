@@ -55,6 +55,17 @@ _NOISE_PATTERN = re.compile(r'\[(?:Pulo de tempo|Intervalo|Gap|Pulo):?.*?\]', fl
 _NEWLINE_PATTERN = re.compile(r'\n{3,}')
 _HTML_TAGS_PATTERN = re.compile(r'<[^>]*>')
 
+_YAML_TITLE_PATTERN = re.compile(r"^(?:title|titulo|TITULO):\s*[\"']?(.+?)[\"']?$", re.MULTILINE | re.IGNORECASE)
+_YAML_DATE_PATTERN = re.compile(r"^(?:date|data|publish_date|upload_date|DATA):\s*[\"']?(.+?)[\"']?$", re.MULTILINE | re.IGNORECASE)
+_YAML_ID_PATTERN = re.compile(r"^(?:video_id|id|ID):\s*[\"']?(.+?)[\"']?$", re.MULTILINE | re.IGNORECASE)
+_MD_H1_PATTERN = re.compile(r"^\s*#\s+(?:\*\*)?(.+?)(?:\*\*)?$", re.MULTILINE)
+_MD_TITLE_CLEAN_PATTERN = re.compile(r'[\*\_]')
+_MD_DATE_PATTERN_1 = re.compile(r"Dat(?:a|e)[^0-9]*?(\d{4}[-]?\d{2}[-]?\d{2})", re.IGNORECASE)
+_MD_DATE_PATTERN_2 = re.compile(r">\s*Dat(?:a|e)[^0-9]*?(\d{4}[-]?\d{2}[-]?\d{2})", re.IGNORECASE)
+_YT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_VIMEO_ID_PATTERN = re.compile(r"^\d{7,12}$")
+_MANIFEST_PREFIXES = ("ARQUIVO: ", "file_source: ", "ID: ", "video_id: ")
+
 # Nome da pasta onde guardamos os arquivos originais após o processamento.
 # Isso mantém a pasta principal limpa e organizada.
 ARCHIVE_DIR_NAME: str = "archive" 
@@ -199,12 +210,12 @@ def _extract_metadata_from_content(content_str: str) -> Dict[str, str]:
     if yaml_content_str is not None:
         # Regexes para cada campo dentro do YAML
         fields_dict = {
-            "title": r"^(?:title|titulo|TITULO):\s*[\"']?(.+?)[\"']?$",
-            "date": r"^(?:date|data|publish_date|upload_date|DATA):\s*[\"']?(.+?)[\"']?$",
-            "id": r"^(?:video_id|id|ID):\s*[\"']?(.+?)[\"']?$"
+            "title": _YAML_TITLE_PATTERN,
+            "date": _YAML_DATE_PATTERN,
+            "id": _YAML_ID_PATTERN
         }
-        for key_str, pattern_str in fields_dict.items():
-            field_match_obj = re.search(pattern_str, yaml_content_str, re.MULTILINE | re.IGNORECASE)
+        for key_str, pattern_obj in fields_dict.items():
+            field_match_obj = pattern_obj.search(yaml_content_str)
             if field_match_obj:
                 val_str = field_match_obj.group(1).strip()
                 if val_str:
@@ -216,11 +227,11 @@ def _extract_metadata_from_content(content_str: str) -> Dict[str, str]:
     # 2. Fallbacks: Se não achou no YAML, tenta via Markdown puro ou padrões de texto
     if "title" not in meta_dict:
         # Busca o primeiro # Título (com flexibilidade para espaços e formatação básica como bold)
-        h1_match_obj = re.search(r"^\s*#\s+(?:\*\*)?(.+?)(?:\*\*)?$", content_str, re.MULTILINE)
+        h1_match_obj = _MD_H1_PATTERN.search(content_str)
         if h1_match_obj:
             title_candidate = h1_match_obj.group(1).strip()
             # Limpa possíveis artefatos de markdown no título (como links ou negritos extras)
-            title_candidate = re.sub(r'[\*\_]', '', title_candidate)
+            title_candidate = _MD_TITLE_CLEAN_PATTERN.sub('', title_candidate)
             if title_candidate:
                 meta_dict["title"] = title_candidate
             
@@ -229,11 +240,11 @@ def _extract_metadata_from_content(content_str: str) -> Dict[str, str]:
         # O regex abaixo é MUITO permissivo com espaços, asteriscos e dois-pontos.
         # Captura: 2026-03-16 ou 20260316
         date_patterns = [
-            r"Dat(?:a|e)[^0-9]*?(\d{4}[-]?\d{2}[-]?\d{2})",
-            r">\s*Dat(?:a|e)[^0-9]*?(\d{4}[-]?\d{2}[-]?\d{2})"
+            _MD_DATE_PATTERN_1,
+            _MD_DATE_PATTERN_2
         ]
-        for pattern in date_patterns:
-            date_match = re.search(pattern, content_str, re.IGNORECASE)
+        for pattern_obj in date_patterns:
+            date_match = pattern_obj.search(content_str)
             if date_match:
                 extracted_date = date_match.group(1).strip()
                 if extracted_date:
@@ -814,24 +825,25 @@ def _parse_volume_manifest(file_path_str: str, files_set_set: Set[str], ids_set_
         with open(file_path_str, 'r', encoding='utf-8-sig') as file_descriptor_obj:
             for raw_line_str in file_descriptor_obj:
                 line_clean_str: str = raw_line_str.strip()
-                if line_clean_str.startswith("ARQUIVO: "):
-                    files_set_set.add(line_clean_str.replace("ARQUIVO: ", ""))
-                elif line_clean_str.startswith("file_source: "):
-                    files_set_set.add(line_clean_str.replace("file_source: ", "").strip('"'))
-                elif line_clean_str.startswith("ID: "):
-                    vid_id_str: str = line_clean_str.replace("ID: ", "")
-                    if vid_id_str and vid_id_str != "Sem ID":
-                        is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
-                        is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
-                        if is_youtube or is_vimeo:
-                            ids_set_set.add(vid_id_str)
-                elif line_clean_str.startswith("video_id: "):
-                    vid_id_str: str = line_clean_str.replace("video_id: ", "").strip('"')
-                    if vid_id_str and vid_id_str != "Sem ID":
-                        is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
-                        is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
-                        if is_youtube or is_vimeo:
-                            ids_set_set.add(vid_id_str)
+                if line_clean_str.startswith(_MANIFEST_PREFIXES):
+                    if line_clean_str.startswith("ARQUIVO: "):
+                        files_set_set.add(line_clean_str.replace("ARQUIVO: ", ""))
+                    elif line_clean_str.startswith("file_source: "):
+                        files_set_set.add(line_clean_str.replace("file_source: ", "").strip('"'))
+                    elif line_clean_str.startswith("ID: "):
+                        vid_id_str: str = line_clean_str.replace("ID: ", "")
+                        if vid_id_str and vid_id_str != "Sem ID":
+                            is_youtube = _YT_ID_PATTERN.match(vid_id_str)
+                            is_vimeo = _VIMEO_ID_PATTERN.match(vid_id_str)
+                            if is_youtube or is_vimeo:
+                                ids_set_set.add(vid_id_str)
+                    elif line_clean_str.startswith("video_id: "):
+                        vid_id_str: str = line_clean_str.replace("video_id: ", "").strip('"')
+                        if vid_id_str and vid_id_str != "Sem ID":
+                            is_youtube = _YT_ID_PATTERN.match(vid_id_str)
+                            is_vimeo = _VIMEO_ID_PATTERN.match(vid_id_str)
+                            if is_youtube or is_vimeo:
+                                ids_set_set.add(vid_id_str)
     except Exception:
         pass
 
