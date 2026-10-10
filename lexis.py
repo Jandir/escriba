@@ -1408,19 +1408,31 @@ def _scan_for_channel_files(dir_path_str: str) -> List[str]:
     """
     dir_name_str: str = os.path.basename(os.path.abspath(dir_path_str))
     pattern_obj = re.compile(rf"^{re.escape(dir_name_str)}[-]+[A-Za-z0-9_-]{{9,15}}(?:-[a-zA-Z0-9-]+)?\.(txt|srt|md)$")
-    return [
-        f for f in os.listdir(dir_path_str) 
-        if pattern_obj.match(f)
-    ]
+    files_list = []
+    # BOLT OPTIMIZATION: Replacing os.listdir() with os.scandir() avoids loading
+    # the entire directory list into memory.
+    with os.scandir(dir_path_str) as it:
+        for entry in it:
+            if pattern_obj.match(entry.name):
+                files_list.append(entry.name)
+    return files_list
 
 
 def _has_archived_files(dir_path_str: str) -> bool:
     """Verifica se existem arquivos na pasta de archive ou archives."""
     for arch_dir in ["archive", "archives"]:
         archive_path_str: str = os.path.join(dir_path_str, arch_dir)
-        if os.path.exists(archive_path_str) and os.path.isdir(archive_path_str):
-            if any(f.endswith(('.txt', '.srt', '.md')) for f in os.listdir(archive_path_str)):
-                return True
+        try:
+            # BOLT OPTIMIZATION:
+            # Using os.scandir() here allows short-circuiting the loop on the first match
+            # without generating a complete in-memory list first (unlike os.listdir with any()).
+            # It also avoids redundant os.path.exists and os.path.isdir checks.
+            with os.scandir(archive_path_str) as it:
+                for entry in it:
+                    if entry.name.endswith(('.txt', '.srt', '.md')):
+                        return True
+        except OSError:
+            pass
     return False
 
 
