@@ -43,3 +43,6 @@
 ## 2026-10-04 - Pre-compiling Regex in NLP Hot Paths
 **Learning:** Python's `re` module caches compiled regex patterns internally, but invoking functions like `re.match()` and `re.search()` directly with string literals inside loops (e.g., iterating through large JSON history objects or processing thousands of subtitle lines) still incurs unnecessary dictionary lookup overhead for the cache.
 **Action:** Extract frequently used regular expressions and assign them to module-level global variables via `re.compile()` (e.g., `_PATTERN = re.compile(r"...")`). Use the compiled object's methods (`_PATTERN.match()`, `_PATTERN.search()`) directly to eliminate compilation cache lookup overhead in performance-sensitive sections.
+## 2026-11-21 - Optimize directory scanning with os.scandir for early exit
+**Learning:** Codebase performance pattern: When checking a directory to see if *any* file matches a specific condition (e.g., `any(f.endswith(...) for f in os.listdir(path))`), using `os.scandir()` inside a `for` loop allows the function to short-circuit and return `True` on the first match (O(K) time) without allocating a list of all directory contents in memory (O(N) memory and time).
+**Action:** Replace `any(...)` with `os.listdir()` with a `with os.scandir() as it: for entry in it:` loop for fast early-exit directory checks.
