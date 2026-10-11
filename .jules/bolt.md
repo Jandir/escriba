@@ -43,3 +43,7 @@
 ## 2026-10-04 - Pre-compiling Regex in NLP Hot Paths
 **Learning:** Python's `re` module caches compiled regex patterns internally, but invoking functions like `re.match()` and `re.search()` directly with string literals inside loops (e.g., iterating through large JSON history objects or processing thousands of subtitle lines) still incurs unnecessary dictionary lookup overhead for the cache.
 **Action:** Extract frequently used regular expressions and assign them to module-level global variables via `re.compile()` (e.g., `_PATTERN = re.compile(r"...")`). Use the compiled object's methods (`_PATTERN.match()`, `_PATTERN.search()`) directly to eliminate compilation cache lookup overhead in performance-sensitive sections.
+
+## 2026-11-20 - Fast cleanup temp files with os.scandir in escriba
+**Learning:** Codebase performance pattern: When cleaning up temporary files based on multiple extensions, using multiple `Path.glob()` calls iterates through the directory multiple times and incurs heavy object creation and stat overhead. A single `os.scandir()` loop with a tuple matching on `endswith` natively in C is dramatically faster.
+**Action:** Replace multiple sequential `Path.glob()` calls used for cleanup operations with a single `os.scandir()` iteration that matches file entries directly.
