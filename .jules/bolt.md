@@ -43,3 +43,7 @@
 ## 2026-10-04 - Pre-compiling Regex in NLP Hot Paths
 **Learning:** Python's `re` module caches compiled regex patterns internally, but invoking functions like `re.match()` and `re.search()` directly with string literals inside loops (e.g., iterating through large JSON history objects or processing thousands of subtitle lines) still incurs unnecessary dictionary lookup overhead for the cache.
 **Action:** Extract frequently used regular expressions and assign them to module-level global variables via `re.compile()` (e.g., `_PATTERN = re.compile(r"...")`). Use the compiled object's methods (`_PATTERN.match()`, `_PATTERN.search()`) directly to eliminate compilation cache lookup overhead in performance-sensitive sections.
+
+## 2024-03-12 - Fast tuple-based str.startswith iteration on inner parsing loop
+**Learning:** When evaluating lines in a large text file using multiple `str.startswith()` conditions (an `if/elif` chain), wrapping the entire chain inside a single `if string.startswith(TUPLE_OF_PREFIXES):` outer check natively quickly bypasses non-matching strings in C, avoiding the overhead of evaluating each condition individually for lines that don't match any prefix. Additionally, extracting inline `re.match()` out of inner text parsing loops avoids compiling overhead.
+**Action:** Always pre-compile regular expressions and use an outer `.startswith()` check with a tuple of prefixes to optimize large multiline block parsing loops.
