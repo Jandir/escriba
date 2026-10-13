@@ -43,3 +43,7 @@
 ## 2026-10-04 - Pre-compiling Regex in NLP Hot Paths
 **Learning:** Python's `re` module caches compiled regex patterns internally, but invoking functions like `re.match()` and `re.search()` directly with string literals inside loops (e.g., iterating through large JSON history objects or processing thousands of subtitle lines) still incurs unnecessary dictionary lookup overhead for the cache.
 **Action:** Extract frequently used regular expressions and assign them to module-level global variables via `re.compile()` (e.g., `_PATTERN = re.compile(r"...")`). Use the compiled object's methods (`_PATTERN.match()`, `_PATTERN.search()`) directly to eliminate compilation cache lookup overhead in performance-sensitive sections.
+
+## 2026-03-06 - Pre-compiling Regex in Markdown Metadata Parsing
+**Learning:** Python's `re` module caches compiled regex patterns internally, but invoking functions like `re.search()` directly with string literals inside frequently called functions (like parsing markdown metadata from every chunk/file) still incurs unnecessary dictionary lookup overhead for the cache.
+**Action:** Extract regular expressions used for unstructured parsing (like frontmatter and headers) and assign them to module-level global variables via `re.compile()`. Use the compiled object's methods (`_PATTERN.search()`, `_PATTERN.sub()`) directly.
