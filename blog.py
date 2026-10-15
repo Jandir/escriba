@@ -72,12 +72,12 @@ def make_post_id(url_or_guid_str: str) -> str:
 
 def is_blog_url(url_str: str) -> bool:
     """Detecta se uma URL corresponde a um blog, feed RSS ou artigo da web."""
-    if not url_str or not (url_str.startswith("http://") or url_str.startswith("https://")):
+    if not url_str or not url_str.startswith(("http://", "https://")):
         return False
     lower_url_str: str = url_str.lower()
     if "youtube.com" in lower_url_str or "youtu.be" in lower_url_str or "vimeo.com" in lower_url_str:
         return False
-    if any(lower_url_str.endswith(ext) for ext in [".xml", ".rss", "/feed", "/feed/", "/rss", "/rss/"]):
+    if lower_url_str.endswith((".xml", ".rss", "/feed", "/feed/", "/rss", "/rss/")):
         return True
     return True
 
