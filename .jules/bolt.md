@@ -43,3 +43,6 @@
 ## 2026-10-04 - Pre-compiling Regex in NLP Hot Paths
 **Learning:** Python's `re` module caches compiled regex patterns internally, but invoking functions like `re.match()` and `re.search()` directly with string literals inside loops (e.g., iterating through large JSON history objects or processing thousands of subtitle lines) still incurs unnecessary dictionary lookup overhead for the cache.
 **Action:** Extract frequently used regular expressions and assign them to module-level global variables via `re.compile()` (e.g., `_PATTERN = re.compile(r"...")`). Use the compiled object's methods (`_PATTERN.match()`, `_PATTERN.search()`) directly to eliminate compilation cache lookup overhead in performance-sensitive sections.
+## 2024-03-10 - Fast cleanup with os.scandir and tuple extensions
+**Learning:** When cleaning up temporary files based on multiple extensions and prefixes, a single `os.scandir()` traversal coupled with `entry.name.endswith(tuple)` is significantly faster than using multiple `Path.glob()` and `.unlink()` loops, as it eliminates redundant path allocations and directory scans.
+**Action:** Use a single `os.scandir()` loop checking `entry.name` for fast file filtering and cleanup.
