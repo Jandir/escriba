@@ -24,3 +24,7 @@
 **Vulnerability:** Indefinite hangs caused by external processes (e.g., yt-dlp) lacking strict timeouts in `escriba.py`.
 **Learning:** Even expected long-running external processes can hang indefinitely due to network issues or unexpected behavior, leading to resource exhaustion (DoS).
 **Prevention:** Enforced a strict 3600-second timeout on `subprocess.run` and handled `subprocess.TimeoutExpired` exceptions.
+## 2026-07-10 - [YAML Injection in Manual YAML Strings]
+**Vulnerability:** The `convert_html_to_clean_markdown` function in `blog.py` manually constructed a YAML frontmatter using an f-string and only escaped double quotes for the article title. This left the application vulnerable to YAML injection if an attacker supplied a title ending in a backslash or containing newline characters.
+**Learning:** The same YAML injection vulnerability that affected the `yaml_safe` tag function also applies anywhere YAML is manually constructed via string interpolation (like f-strings). Always escape backslashes, newlines, and carriage returns before escaping double quotes when embedding arbitrary strings in double-quoted YAML fields.
+**Prevention:** Apply the full escaping sequence (`.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace('"', '\"')`) to all interpolated variables (such as title and URL) in manually constructed YAML strings.
