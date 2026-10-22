@@ -151,6 +151,17 @@ def _process_subtitle_block(raw_text_str: str, subtitle_blocks_list: List[List[s
         subtitle_blocks_list.append(current_lines_list[start_idx_int:])
 
 
+# BOLT OPTIMIZATION: Pre-compiled regex patterns for metadata extraction to avoid on-the-fly compilation overhead
+_YAML_TITLE_PATTERN = re.compile(r"^(?:title|titulo|TITULO):\s*[\"']?(.+?)[\"']?$", re.MULTILINE | re.IGNORECASE)
+_YAML_DATE_PATTERN = re.compile(r"^(?:date|data|publish_date|upload_date|DATA):\s*[\"']?(.+?)[\"']?$", re.MULTILINE | re.IGNORECASE)
+_YAML_ID_PATTERN = re.compile(r"^(?:video_id|id|ID):\s*[\"']?(.+?)[\"']?$", re.MULTILINE | re.IGNORECASE)
+_MD_H1_PATTERN = re.compile(r"^\s*#\s+(?:\*\*)?(.+?)(?:\*\*)?$", re.MULTILINE)
+_DATE_FALLBACK_PATTERNS = [
+    re.compile(r"Dat(?:a|e)[^0-9]*?(\d{4}[-]?\d{2}[-]?\d{2})", re.IGNORECASE),
+    re.compile(r">\s*Dat(?:a|e)[^0-9]*?(\d{4}[-]?\d{2}[-]?\d{2})", re.IGNORECASE)
+]
+
+
 def _get_deduplication_start_index(prev_list_list: List[str], curr_list_list: List[str]) -> int:
     """
     Compara o bloco anterior com o atual para saber onde começa o texto inédito.
@@ -197,30 +208,33 @@ def _extract_metadata_from_content(content_str: str) -> Dict[str, str]:
             yaml_content_str = content_str[4:idx]
 
     if yaml_content_str is not None:
-        # Regexes para cada campo dentro do YAML
-        fields_dict = {
-            "title": r"^(?:title|titulo|TITULO):\s*[\"']?(.+?)[\"']?$",
-            "date": r"^(?:date|data|publish_date|upload_date|DATA):\s*[\"']?(.+?)[\"']?$",
-            "id": r"^(?:video_id|id|ID):\s*[\"']?(.+?)[\"']?$"
-        }
-        for key_str, pattern_str in fields_dict.items():
-            field_match_obj = re.search(pattern_str, yaml_content_str, re.MULTILINE | re.IGNORECASE)
-            if field_match_obj:
-                val_str = field_match_obj.group(1).strip()
-                if val_str:
-                    if key_str == "date":
-                        meta_dict["date"] = format_date(val_str)
-                    else:
-                        meta_dict[key_str] = val_str
+        title_match = _YAML_TITLE_PATTERN.search(yaml_content_str)
+        if title_match:
+            val_str = title_match.group(1).strip()
+            if val_str:
+                meta_dict["title"] = val_str
+
+        date_match = _YAML_DATE_PATTERN.search(yaml_content_str)
+        if date_match:
+            val_str = date_match.group(1).strip()
+            if val_str:
+                meta_dict["date"] = format_date(val_str)
+
+        id_match = _YAML_ID_PATTERN.search(yaml_content_str)
+        if id_match:
+            val_str = id_match.group(1).strip()
+            if val_str:
+                meta_dict["id"] = val_str
 
     # 2. Fallbacks: Se não achou no YAML, tenta via Markdown puro ou padrões de texto
     if "title" not in meta_dict:
         # Busca o primeiro # Título (com flexibilidade para espaços e formatação básica como bold)
-        h1_match_obj = re.search(r"^\s*#\s+(?:\*\*)?(.+?)(?:\*\*)?$", content_str, re.MULTILINE)
+        h1_match_obj = _MD_H1_PATTERN.search(content_str)
         if h1_match_obj:
             title_candidate = h1_match_obj.group(1).strip()
             # Limpa possíveis artefatos de markdown no título (como links ou negritos extras)
-            title_candidate = re.sub(r'[\*\_]', '', title_candidate)
+            # BOLT OPTIMIZATION: string replacement is faster than regex here
+            title_candidate = title_candidate.replace('*', '').replace('_', '')
             if title_candidate:
                 meta_dict["title"] = title_candidate
             
@@ -228,12 +242,8 @@ def _extract_metadata_from_content(content_str: str) -> Dict[str, str]:
         # Busca variações de > **Data:** YYYY-MM-DD ou **Data**: 20260316
         # O regex abaixo é MUITO permissivo com espaços, asteriscos e dois-pontos.
         # Captura: 2026-03-16 ou 20260316
-        date_patterns = [
-            r"Dat(?:a|e)[^0-9]*?(\d{4}[-]?\d{2}[-]?\d{2})",
-            r">\s*Dat(?:a|e)[^0-9]*?(\d{4}[-]?\d{2}[-]?\d{2})"
-        ]
-        for pattern in date_patterns:
-            date_match = re.search(pattern, content_str, re.IGNORECASE)
+        for pattern in _DATE_FALLBACK_PATTERNS:
+            date_match = pattern.search(content_str)
             if date_match:
                 extracted_date = date_match.group(1).strip()
                 if extracted_date:
