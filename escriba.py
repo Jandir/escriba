@@ -851,6 +851,8 @@ def get_provider(url: str) -> str:
 
 def yaml_safe(template: Any) -> str:
     """Função de Tag (PEP 750) para renderizar cabeçalhos YAML com segurança."""
+    if isinstance(template, str):
+        return template
     res: list[str] = []
     for i, interp in enumerate(template.interpolations):
         prefix = template.strings[i]
