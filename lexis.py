@@ -701,6 +701,13 @@ _VOLUME_METADATA_PATTERN = re.compile(
     re.MULTILINE
 )
 
+# BOLT OPTIMIZATION: Use globally pre-compiled regexes for manifest validation
+# to eliminate re-compilation and cache lookup overhead inside a hot parsing loop.
+_MANIFEST_PREFIXES = ("ARQUIVO: ", "file_source: ", "ID: ", "video_id: ")
+_YT_ID_MATCH_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_VM_ID_MATCH_PATTERN = re.compile(r"^\d{7,12}$")
+
+
 def extract_metadata_from_volume(volume_content_str: str) -> List[Dict[str, str]]:
     """
     Lê um arquivo de volume já pronto e extrai a lista de vídeos que estão lá.
@@ -824,23 +831,24 @@ def _parse_volume_manifest(file_path_str: str, files_set_set: Set[str], ids_set_
         with open(file_path_str, 'r', encoding='utf-8-sig') as file_descriptor_obj:
             for raw_line_str in file_descriptor_obj:
                 line_clean_str: str = raw_line_str.strip()
+
+                # BOLT OPTIMIZATION: Fast tuple-based early exit and exact string slicing
+                # bypasses slow evaluation of irrelevant lines and avoids multiple string passes via str.replace()
+                if not line_clean_str.startswith(_MANIFEST_PREFIXES):
+                    continue
                 if line_clean_str.startswith("ARQUIVO: "):
-                    files_set_set.add(line_clean_str.replace("ARQUIVO: ", ""))
+                    files_set_set.add(line_clean_str[9:])
                 elif line_clean_str.startswith("file_source: "):
-                    files_set_set.add(line_clean_str.replace("file_source: ", "").strip('"'))
+                    files_set_set.add(line_clean_str[13:].strip('"'))
                 elif line_clean_str.startswith("ID: "):
-                    vid_id_str: str = line_clean_str.replace("ID: ", "")
+                    vid_id_str: str = line_clean_str[4:]
                     if vid_id_str and vid_id_str != "Sem ID":
-                        is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
-                        is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
-                        if is_youtube or is_vimeo:
+                        if _YT_ID_MATCH_PATTERN.match(vid_id_str) or _VM_ID_MATCH_PATTERN.match(vid_id_str):
                             ids_set_set.add(vid_id_str)
                 elif line_clean_str.startswith("video_id: "):
-                    vid_id_str: str = line_clean_str.replace("video_id: ", "").strip('"')
+                    vid_id_str: str = line_clean_str[10:].strip('"')
                     if vid_id_str and vid_id_str != "Sem ID":
-                        is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
-                        is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
-                        if is_youtube or is_vimeo:
+                        if _YT_ID_MATCH_PATTERN.match(vid_id_str) or _VM_ID_MATCH_PATTERN.match(vid_id_str):
                             ids_set_set.add(vid_id_str)
     except Exception:
         pass
