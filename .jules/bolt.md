@@ -47,3 +47,7 @@
 ## 2026-11-20 - Pre-compiling Regexes for Metadata Parsing
 **Learning:** Python's `re.compile()` avoids internal cache lookup overhead. Inline usage of `re.search()` and `re.sub()` inside loops or heavily used functions (like extracting YAML metadata in `lexis.py`) incurs avoidable performance hits.
 **Action:** Move inline `re.search` patterns to module-level constants as `_PATTERN = re.compile(...)`. Also, use `str.replace` over `re.sub` for simple character removals where possible.
+
+## 2026-11-20 - Fast prefix removal using string slicing
+**Learning:** Codebase performance pattern: When extracting a value by removing a known static prefix (e.g., after a `str.startswith()` check in a loop), using direct string slicing (e.g., `line[9:]`) is faster than using `str.replace(prefix, "")`. `.replace()` must scan the entire string to ensure all occurrences are removed, whereas slicing is a direct memory operation on a specific known index. Furthermore, slicing correctly handles cases where the prefix might coincidentally appear later in the string, preventing bugs.
+**Action:** When a string is known to start with a prefix and that prefix needs to be removed, always prefer exact string slicing over `str.replace()`.
