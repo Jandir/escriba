@@ -1,6 +1,5 @@
 import re
 import functools
-import os
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Pattern
 from utils import print_err
