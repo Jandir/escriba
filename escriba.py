@@ -372,7 +372,8 @@ def identify_source_type(
 
 def consolidar_dados_legados(cwd_path: Path, target_json_path: Path) -> None:
     """Migra automaticamente JSONs antigos para o novo formato de pasta consolidada."""
-    legacy_list = list(cwd_path.glob("escriba_*.json")) + list(cwd_path.glob("lista_*.json"))
+    # ⚡ Bolt: Single directory scan for JSON files avoids redundant I/O and preserves readability.
+    legacy_list = [p for p in cwd_path.glob("*.json") if p.name.startswith(("escriba_", "lista_"))]
     for lj_path in legacy_list:
         if lj_path.resolve() == target_json_path.resolve():
             continue
@@ -2826,7 +2827,8 @@ def _run_direct_video_download_flow(cli_args_ns: argparse.Namespace) -> None:
 def exibir_status_canais_json() -> None:
     """Localiza todos os arquivos de banco de dados escriba_*.json na pasta de trabalho e exibe estatísticas como JSON."""
     cwd_path = Path.cwd()
-    db_files = list(cwd_path.glob("escriba_*.json")) + list(cwd_path.glob("lista_*.json"))
+    # ⚡ Bolt: Single directory scan for JSON files avoids redundant I/O and preserves readability.
+    db_files = [p for p in cwd_path.glob("*.json") if p.name.startswith(("escriba_", "lista_"))]
     seen: set[Path] = set()
     unique_dbs: list[Path] = []
     for p in db_files:
