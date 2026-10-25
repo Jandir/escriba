@@ -683,7 +683,8 @@ def _read_legacy_nosub_file(file_path: Path) -> set[str]:
 
 def migrate_all_databases(cwd_path: Path) -> None:
     """Executa a varredura completa de atualização estrutural em todos os JSONs da pasta."""
-    json_paths_list: List[Path] = list(cwd_path.glob("escriba_*.json")) + list(cwd_path.glob("lista_*.json"))
+    # ⚡ Bolt: Single directory scan for JSON files avoids redundant I/O and preserves readability.
+    json_paths_list: List[Path] = [p for p in cwd_path.glob("*.json") if p.name.startswith(("escriba_", "lista_"))]
     if not json_paths_list:
         print_info("Nenhum banco de dados compatível encontrado para migração.")
         return

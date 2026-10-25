@@ -47,3 +47,7 @@
 ## 2026-11-20 - Pre-compiling Regexes for Metadata Parsing
 **Learning:** Python's `re.compile()` avoids internal cache lookup overhead. Inline usage of `re.search()` and `re.sub()` inside loops or heavily used functions (like extracting YAML metadata in `lexis.py`) incurs avoidable performance hits.
 **Action:** Move inline `re.search` patterns to module-level constants as `_PATTERN = re.compile(...)`. Also, use `str.replace` over `re.sub` for simple character removals where possible.
+
+## 2023-10-25 - Avoid over-optimizing cold paths with unreadable code
+**Learning:** Functions like `migrate_all_databases` and `consolidar_dados_legados` are one-off migration and status scripts, making them cold paths. Implementing verbose `os.scandir` loops to save a few directory traversals hurts readability without a measurable real-world performance impact, violating the prompt's constraints.
+**Action:** For directory traversals in cold paths, prefer readable optimizations. For example, instead of using `os.scandir` to avoid two `Path.glob()` passes, simply consolidate them into a single pass using in-memory filtering: `[p for p in path.glob('*.json') if p.name.startswith(('escriba_', 'lista_'))]`.
