@@ -54,6 +54,10 @@ from utils import print_ok, print_err, print_warn, print_info, print_section, ex
 _NOISE_PATTERN = re.compile(r'\[(?:Pulo de tempo|Intervalo|Gap|Pulo):?.*?\]', flags=re.IGNORECASE)
 _NEWLINE_PATTERN = re.compile(r'\n{3,}')
 _HTML_TAGS_PATTERN = re.compile(r'<[^>]*>')
+# BOLT OPTIMIZATION: Extracting repeated regex matches in _parse_volume_manifest
+# to module level to avoid compilation cache lookup overhead on every iteration.
+_YOUTUBE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_VIMEO_ID_PATTERN = re.compile(r"^\d{7,12}$")
 
 # Nome da pasta onde guardamos os arquivos originais após o processamento.
 # Isso mantém a pasta principal limpa e organizada.
@@ -824,24 +828,28 @@ def _parse_volume_manifest(file_path_str: str, files_set_set: Set[str], ids_set_
         with open(file_path_str, 'r', encoding='utf-8-sig') as file_descriptor_obj:
             for raw_line_str in file_descriptor_obj:
                 line_clean_str: str = raw_line_str.strip()
-                if line_clean_str.startswith("ARQUIVO: "):
-                    files_set_set.add(line_clean_str.replace("ARQUIVO: ", ""))
-                elif line_clean_str.startswith("file_source: "):
-                    files_set_set.add(line_clean_str.replace("file_source: ", "").strip('"'))
-                elif line_clean_str.startswith("ID: "):
-                    vid_id_str: str = line_clean_str.replace("ID: ", "")
-                    if vid_id_str and vid_id_str != "Sem ID":
-                        is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
-                        is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
-                        if is_youtube or is_vimeo:
-                            ids_set_set.add(vid_id_str)
-                elif line_clean_str.startswith("video_id: "):
-                    vid_id_str: str = line_clean_str.replace("video_id: ", "").strip('"')
-                    if vid_id_str and vid_id_str != "Sem ID":
-                        is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
-                        is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
-                        if is_youtube or is_vimeo:
-                            ids_set_set.add(vid_id_str)
+                # BOLT OPTIMIZATION: Tuple-based startswith uses highly optimized C-level
+                # iteration to rapidly skip the vast majority of non-matching lines, avoiding
+                # evaluating multiple individual Python if/elif conditions for every line.
+                if line_clean_str.startswith(("ARQUIVO: ", "file_source: ", "ID: ", "video_id: ")):
+                    if line_clean_str.startswith("ARQUIVO: "):
+                        files_set_set.add(line_clean_str.replace("ARQUIVO: ", ""))
+                    elif line_clean_str.startswith("file_source: "):
+                        files_set_set.add(line_clean_str.replace("file_source: ", "").strip('"'))
+                    elif line_clean_str.startswith("ID: "):
+                        vid_id_str: str = line_clean_str.replace("ID: ", "")
+                        if vid_id_str and vid_id_str != "Sem ID":
+                            is_youtube = _YOUTUBE_ID_PATTERN.match(vid_id_str)
+                            is_vimeo = _VIMEO_ID_PATTERN.match(vid_id_str)
+                            if is_youtube or is_vimeo:
+                                ids_set_set.add(vid_id_str)
+                    elif line_clean_str.startswith("video_id: "):
+                        vid_id_str: str = line_clean_str.replace("video_id: ", "").strip('"')
+                        if vid_id_str and vid_id_str != "Sem ID":
+                            is_youtube = _YOUTUBE_ID_PATTERN.match(vid_id_str)
+                            is_vimeo = _VIMEO_ID_PATTERN.match(vid_id_str)
+                            if is_youtube or is_vimeo:
+                                ids_set_set.add(vid_id_str)
     except Exception:
         pass
 
