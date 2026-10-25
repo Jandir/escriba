@@ -77,7 +77,7 @@ def is_blog_url(url_str: str) -> bool:
     lower_url_str: str = url_str.lower()
     if "youtube.com" in lower_url_str or "youtu.be" in lower_url_str or "vimeo.com" in lower_url_str:
         return False
-    if any(lower_url_str.endswith(ext) for ext in [".xml", ".rss", "/feed", "/feed/", "/rss", "/rss/"]):
+    if lower_url_str.endswith((".xml", ".rss", "/feed", "/feed/", "/rss", "/rss/")):
         return True
     return True
 
