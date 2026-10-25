@@ -381,7 +381,7 @@ def convert_html_to_clean_markdown(
     markdown_text_str = fix_sentence_capitalization(markdown_text_str)
 
     # Monta cabeçalho YAML padronizado idêntico ao NotebookLM do Escriba
-    safe_title_str = article_title_str.replace('"', '\\"')
+    safe_title_str = article_title_str.replace('\\', '\\\\').replace('\n', '\\n').replace('\r', '\\r').replace('"', '\\"')
     yaml_header_str: str = f"""---
 title: "{safe_title_str}"
 video_id: "{post_id_str}"
