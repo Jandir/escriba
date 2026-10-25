@@ -26,6 +26,58 @@ def test_clean_ekklezia_terms():
 
 
 
+# ─── Stopwords Merging ───────────────────────────────────────────────────────
+
+@patch("escriba._load_ml_deps")
+def test_get_merged_stopwords_no_deps(mock_load_ml_deps):
+    """Garante que retorna frozenset vazio se as dependências de ML falharem ao carregar."""
+    mock_load_ml_deps.return_value = None
+    escriba.get_merged_stopwords.cache_clear()
+
+    result = escriba.get_merged_stopwords("pt")
+
+    assert result == frozenset()
+    mock_load_ml_deps.assert_called_once()
+
+@patch("escriba._get_lang_resources")
+@patch("escriba._load_ml_deps")
+def test_get_merged_stopwords_happy_path(mock_load_ml_deps, mock_get_lang_resources):
+    """Garante que as stopwords do NLTK são fundidas corretamente com os marcadores orais."""
+    mock_nltk = MagicMock()
+    mock_nltk_stopwords = MagicMock()
+    mock_nltk_stopwords.words.return_value = ["a", "o", "da"]
+
+    # Simula o retorno de _load_ml_deps: pysrt, np, nltk, nltk_stopwords, TfidfVectorizer, cosine_similarity
+    mock_load_ml_deps.return_value = (None, None, mock_nltk, mock_nltk_stopwords, None, None)
+
+    mock_get_lang_resources.return_value = ("portuguese", {"né", "tipo"})
+
+    escriba.get_merged_stopwords.cache_clear()
+    result = escriba.get_merged_stopwords("pt")
+
+    mock_nltk_stopwords.words.assert_called_once_with("portuguese")
+    assert result == frozenset({"a", "o", "da", "né", "tipo"})
+
+@patch("escriba._get_lang_resources")
+@patch("escriba._load_ml_deps")
+def test_get_merged_stopwords_lookup_error(mock_load_ml_deps, mock_get_lang_resources):
+    """Garante que o NLTK faz o download e tenta novamente ao disparar LookupError."""
+    mock_nltk = MagicMock()
+    mock_nltk_stopwords = MagicMock()
+
+    # Configura para falhar na primeira vez e retornar na segunda
+    mock_nltk_stopwords.words.side_effect = [LookupError("Resource not found"), ["the", "and"]]
+
+    mock_load_ml_deps.return_value = (None, None, mock_nltk, mock_nltk_stopwords, None, None)
+    mock_get_lang_resources.return_value = ("english", {"like", "umm"})
+
+    escriba.get_merged_stopwords.cache_clear()
+    result = escriba.get_merged_stopwords("en")
+
+    mock_nltk.download.assert_called_once_with('stopwords', quiet=True)
+    assert mock_nltk_stopwords.words.call_count == 2
+    assert result == frozenset({"the", "and", "like", "umm"})
+
 # ─── Roll-up e Deduplicação ──────────────────────────────────────────────────
 
 def test_strip_rollup_full_overlap():
