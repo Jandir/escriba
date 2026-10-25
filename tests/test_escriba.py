@@ -9,10 +9,30 @@ from typing import Dict, List, Any
 # Adiciona diretório pai no path para facilitar import local
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from escriba import clean_ekklezia_terms, _strip_rollup, create_adaptive_windows, srt_to_md, _dedup_lines
+from escriba import clean_ekklezia_terms, _strip_rollup, create_adaptive_windows, srt_to_md, _dedup_lines, get_provider
 import pysrt
 import escriba
 import youtube
+
+# ─── Provider Detection ──────────────────────────────────────────────────────
+
+def test_get_provider():
+    """Verifica a correta identificação do provedor de vídeo com base na URL ou ID."""
+    # YouTube (default fallbacks)
+    assert get_provider("https://youtube.com/watch?v=dQw4w9WgXcQ") == "youtube"
+    assert get_provider("https://youtu.be/dQw4w9WgXcQ") == "youtube"
+    assert get_provider("dQw4w9WgXcQ") == "youtube"  # 11-char ID
+
+    # Vimeo (contém vimeo.com ou é numérico longo)
+    assert get_provider("https://vimeo.com/123456789") == "vimeo"
+    assert get_provider("vimeo.com/123456789") == "vimeo"
+    assert get_provider("http://vimeo.com/video") == "vimeo"
+    assert get_provider("1234567") == "vimeo"  # ID puramente numérico (7 digitos)
+    assert get_provider("123456789012") == "vimeo" # (12 digitos)
+
+    # Casos limites
+    assert get_provider("") == "youtube"
+    assert get_provider(None) == "youtube"
 
 # ─── Termos Ekklezia ─────────────────────────────────────────────────────────
 
