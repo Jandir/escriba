@@ -142,7 +142,6 @@ def _get_ekklezia_regex() -> Tuple[Optional[Pattern], Dict[str, str]]:
 
 
 # BOLT OPTIMIZATION: Global pre-compiled regexes for NLP hot paths
-_MUSIC_NOTES_PATTERN = re.compile(r'[♪♫#]')
 _ASR_MARKERS_PATTERN = re.compile(r'\[(Música|Aplausos|Risos|Música ao fundo|Vinheta|Vinheta de abertura|Legendas pela comunidade)\]', flags=re.IGNORECASE)
 
 def clean_asr_artifacts(text_str: str) -> str:
@@ -151,8 +150,8 @@ def clean_asr_artifacts(text_str: str) -> str:
     """
     if not text_str:
         return text_str
-    # Remove caracteres de nota musical
-    cleaned = _MUSIC_NOTES_PATTERN.sub('', text_str)
+    # Remove caracteres de nota musical (using chained replaces for performance)
+    cleaned = text_str.replace('♪', '').replace('♫', '').replace('#', '')
     # Remove marcadores entre colchetes típicos de ASR
     cleaned = _ASR_MARKERS_PATTERN.sub('', cleaned)
     # Normaliza múltiplos espaços
@@ -221,8 +220,6 @@ def fix_sentence_capitalization(text_str: str) -> str:
     return clean_txt
 
 
-_END_PUNCT_PATTERN = re.compile(r'[.!?\x3a\x3b,]$')
-
 def restore_punctuation_heuristics(text_str: str, pause_after_seconds: float = 0.0, is_last_segment: bool = False) -> str:
     """
     Restaura pontuação gramatical local baseando-se no tempo de pausa entre legendas ASR
@@ -236,7 +233,7 @@ def restore_punctuation_heuristics(text_str: str, pause_after_seconds: float = 0
         return text_str
 
     # Se o texto não termina com pontuação (. ! ? , ; :)
-    if not _END_PUNCT_PATTERN.search(clean_txt):
+    if clean_txt[-1] not in ('.', '!', '?', ':', ';', ','):
         if is_last_segment or pause_after_seconds >= 0.4:
             clean_txt += "."
         elif pause_after_seconds >= 0.15:
