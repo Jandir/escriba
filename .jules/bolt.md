@@ -47,3 +47,7 @@
 ## 2026-11-20 - Pre-compiling Regexes for Metadata Parsing
 **Learning:** Python's `re.compile()` avoids internal cache lookup overhead. Inline usage of `re.search()` and `re.sub()` inside loops or heavily used functions (like extracting YAML metadata in `lexis.py`) incurs avoidable performance hits.
 **Action:** Move inline `re.search` patterns to module-level constants as `_PATTERN = re.compile(...)`. Also, use `str.replace` over `re.sub` for simple character removals where possible.
+
+## 2026-11-25 - Pre-compiling Regex in HTML Hot Paths
+**Learning:** Python's `re` module caches compiled regex patterns internally, but invoking functions like `re.compile()` directly with string literals inside frequently called functions (e.g., parsing HTML articles in `blog.py`) still incurs unnecessary compilation and cache lookup overhead.
+**Action:** Extract frequently used regular expressions and assign them to module-level global variables via `re.compile()` (e.g., `_PATTERN = re.compile(r"...")`). Use the compiled object directly in methods like `BeautifulSoup.find_all(class_=_PATTERN)` to eliminate compilation overhead in performance-sensitive sections.
