@@ -319,6 +319,9 @@ def detect_language(
     return f"^{DEFAULT_LANGUAGE_FALLBACK}.*"
 
 
+_WIDGET_CLASS_PATTERN = re.compile(r"(sidebar|comment|menu|nav|footer|ad-|advertisement|social|share)", re.IGNORECASE)
+_CONTENT_CLASS_PATTERN = re.compile(r"(post-content|entry-content|article-content|content-area|blog-post)", re.IGNORECASE)
+
 def _clean_html_article_body(soup_obj: BeautifulSoup) -> str:
     """
     Remove tags ruidosas (scripts, estilos, menus, rodapés, anúncios)
@@ -330,7 +333,7 @@ def _clean_html_article_body(soup_obj: BeautifulSoup) -> str:
             el.decompose()
 
     # Remove elementos comuns de navegação e widgets
-    for el in soup_obj.find_all(class_=re.compile(r"(sidebar|comment|menu|nav|footer|ad-|advertisement|social|share)", re.IGNORECASE)):
+    for el in soup_obj.find_all(class_=_WIDGET_CLASS_PATTERN):
         if el.name not in ["body", "main", "article", "html"]:
             el.decompose()
 
@@ -339,7 +342,7 @@ def _clean_html_article_body(soup_obj: BeautifulSoup) -> str:
         soup_obj.find("article")
         or soup_obj.find(attrs={"role": "main"})
         or soup_obj.find("main")
-        or soup_obj.find(class_=re.compile(r"(post-content|entry-content|article-content|content-area|blog-post)", re.IGNORECASE))
+        or soup_obj.find(class_=_CONTENT_CLASS_PATTERN)
         or soup_obj.find("body")
         or soup_obj
     )
