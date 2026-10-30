@@ -47,3 +47,6 @@
 ## 2026-11-20 - Pre-compiling Regexes for Metadata Parsing
 **Learning:** Python's `re.compile()` avoids internal cache lookup overhead. Inline usage of `re.search()` and `re.sub()` inside loops or heavily used functions (like extracting YAML metadata in `lexis.py`) incurs avoidable performance hits.
 **Action:** Move inline `re.search` patterns to module-level constants as `_PATTERN = re.compile(...)`. Also, use `str.replace` over `re.sub` for simple character removals where possible.
+## 2026-11-25 - O(1) end-of-string matching
+**Learning:** For O(1) end-of-string matching (like checking for punctuation at the end of a line) in hot paths (such as subtitle processing), using native string slicing and tuple membership checks (e.g., `s.rstrip(' "\'')[-1:] in ('.', '!', '?')`) is significantly faster than using a compiled regular expression (`re.search()`). It avoids regex engine compilation cache overhead and evaluates much quicker.
+**Action:** Replace `re.search` for end-of-sentence boundaries with native string slicing and tuple membership.
