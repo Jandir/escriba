@@ -97,8 +97,6 @@ def test_create_adaptive_windows_multi_minute():
 def test_process_sub_into_para_flushes_on_timeout():
     """Verifica se parágrafos são quebrados quando ultrapassa 60 segundos com pontuação de fim de frase."""
     from escriba import _process_sub_into_para
-    import re
-    sentence_end_re = re.compile(r'[.!?]["\']?\s*$')
 
     md_lines: list[str] = []
     sub1 = MagicMock()
@@ -106,7 +104,7 @@ def test_process_sub_into_para_flushes_on_timeout():
     sub1.end = pysrt.SubRipTime(seconds=30)
     sub1.text = "Início da conversa."
 
-    para_start, para_lines = _process_sub_into_para(sub1, None, [], md_lines, sentence_end_re)
+    para_start, para_lines = _process_sub_into_para(sub1, None, [], md_lines)
     assert len(para_lines) == 1
     assert len(md_lines) == 0
 
@@ -115,7 +113,7 @@ def test_process_sub_into_para_flushes_on_timeout():
     sub2.end = pysrt.SubRipTime(minutes=1, seconds=15)
     sub2.text = "Fim do primeiro parágrafo."
 
-    para_start2, para_lines2 = _process_sub_into_para(sub2, para_start, para_lines, md_lines, sentence_end_re)
+    para_start2, para_lines2 = _process_sub_into_para(sub2, para_start, para_lines, md_lines)
     # Deve ter dado flush no parágrafo porque decorreram 75s (>= 60s) e terminou em ponto final
     assert len(md_lines) == 1
     assert para_start2 is None

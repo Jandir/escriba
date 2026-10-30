@@ -980,7 +980,6 @@ def _process_sub_into_para(
     para_start_time: Any,
     para_lines_list: list[str],
     md_lines: list[str],
-    sentence_end_re: re.Pattern,
     clean_texts: dict[int, str] | None = None,
 ) -> tuple[Any, list[str]]:
     """Processa uma única legenda dentro de um parágrafo."""
@@ -992,7 +991,7 @@ def _process_sub_into_para(
         para_start_time = sub.start
     para_lines_list.append(sub_text_str)
     elapsed_int = _calc_total_seconds(sub.end) - _calc_total_seconds(para_start_time)
-    if (elapsed_int >= 60 and sentence_end_re.search(sub_text_str)) or elapsed_int >= 120:
+    if (elapsed_int >= 60 and (sub_text_str and sub_text_str.rstrip(' \t\n\r"\'')[-1:] in ('.', '!', '?'))) or elapsed_int >= 120:
         _flush_paragraph(_dedup_lines(para_lines_list), _smart_ts(para_start_time), md_lines)
         return None, []
     return para_start_time, para_lines_list
@@ -1005,7 +1004,6 @@ def _generate_transcription_structured(
     clean_texts: dict[int, str] | None = None,
 ) -> None:
     """Gera a transcrição estruturada por tópicos com hierarquia H3 (###)."""
-    sentence_end_re = re.compile(r'[.!?]["\']?\s*$')
     for (ts_str, _, seg_wins_list), label_str in zip(segments, topic_labels):
         md_lines.append(f"### [{ts_str}] - Tópico: {label_str}\n")
         para_lines_list: list[str] = []
@@ -1013,7 +1011,7 @@ def _generate_transcription_structured(
         for window_dict in seg_wins_list:
             for sub_obj in window_dict["subs"]:
                 para_start_time, para_lines_list = _process_sub_into_para(
-                    sub_obj, para_start_time, para_lines_list, md_lines, sentence_end_re, clean_texts
+                    sub_obj, para_start_time, para_lines_list, md_lines, clean_texts
                 )
         if para_lines_list:
             _flush_paragraph(_dedup_lines(para_lines_list), _smart_ts(para_start_time), md_lines)
