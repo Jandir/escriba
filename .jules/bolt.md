@@ -47,3 +47,6 @@
 ## 2026-11-20 - Pre-compiling Regexes for Metadata Parsing
 **Learning:** Python's `re.compile()` avoids internal cache lookup overhead. Inline usage of `re.search()` and `re.sub()` inside loops or heavily used functions (like extracting YAML metadata in `lexis.py`) incurs avoidable performance hits.
 **Action:** Move inline `re.search` patterns to module-level constants as `_PATTERN = re.compile(...)`. Also, use `str.replace` over `re.sub` for simple character removals where possible.
+## 2026-12-05 - Fast manifest parsing with tuple startswith and string slicing
+**Learning:** Using multiple `str.startswith()` checks in an `if/elif` chain is slower than a single `startswith()` check using a tuple of prefixes. Once matched, extracting the value with native string slicing (e.g. `line[9:]`) is faster than using `str.replace(prefix, "")` because it avoids creating intermediate string objects and searching the whole string. Pre-compiling regexes as global module constants avoids regex compilation lookup overhead on each function call.
+**Action:** Use tuple-based `startswith()` and string slicing for fast parsing of manifest variables in text files, and declare regex patterns at the module level.
