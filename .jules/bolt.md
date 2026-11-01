@@ -47,3 +47,11 @@
 ## 2026-11-20 - Pre-compiling Regexes for Metadata Parsing
 **Learning:** Python's `re.compile()` avoids internal cache lookup overhead. Inline usage of `re.search()` and `re.sub()` inside loops or heavily used functions (like extracting YAML metadata in `lexis.py`) incurs avoidable performance hits.
 **Action:** Move inline `re.search` patterns to module-level constants as `_PATTERN = re.compile(...)`. Also, use `str.replace` over `re.sub` for simple character removals where possible.
+
+## 2024-11-05 - Avoid micro-optimizations that introduce bugs
+**Learning:** Codebase performance pattern: Avoid replacing already pre-compiled regular expressions with native string slicing (e.g., `s.rstrip(' "\'')[-1:] in ('.', '!', '?')`) for end-of-string matching. If the regex is pre-compiled outside the hot loop, native slicing provides no measurable real-world performance benefit (a forbidden micro-optimization) and often introduces functional bugs by missing edge cases (like trailing tabs or newlines matched by `\s*`).
+**Action:** Do not use string slicing to replace pre-compiled regexes unless it significantly impacts overall performance (not just synthetic micro-benchmarks). Always ensure the replacement perfectly matches the original regex's edge cases, especially concerning trailing whitespace characters like newlines.
+
+## 2024-11-05 - Fast prefix matching in tight loops
+**Learning:** Codebase performance pattern: When checking multiple prefixes against strings in a loop (e.g., parsing log lines or manifests), checking `if line.startswith(TUPLE_OF_PREFIXES):` before doing an `if/elif` chain is significantly faster because the tuple check is implemented in highly-optimized C, short-circuiting non-matches instantly. Furthermore, using slicing (e.g., `line[9:]`) instead of `.replace("PREFIX", "")` reduces object instantiation overhead, and moving inline `re.match()` patterns to globally compiled `re.compile()` objects avoids repeated compilation cache lookups.
+**Action:** For string parsing in hot loops, use tuple `startswith` guards, replace `.replace()` with slicing, and move all regular expressions to global pre-compiled constants.
