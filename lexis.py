@@ -156,6 +156,9 @@ _YAML_TITLE_PATTERN = re.compile(r"^(?:title|titulo|TITULO):\s*[\"']?(.+?)[\"']?
 _YAML_DATE_PATTERN = re.compile(r"^(?:date|data|publish_date|upload_date|DATA):\s*[\"']?(.+?)[\"']?$", re.MULTILINE | re.IGNORECASE)
 _YAML_ID_PATTERN = re.compile(r"^(?:video_id|id|ID):\s*[\"']?(.+?)[\"']?$", re.MULTILINE | re.IGNORECASE)
 _MD_H1_PATTERN = re.compile(r"^\s*#\s+(?:\*\*)?(.+?)(?:\*\*)?$", re.MULTILINE)
+_YT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_VIMEO_ID_PATTERN = re.compile(r"^\d{7,12}$")
+_MANIFEST_PREFIXES = ("ARQUIVO: ", "file_source: ", "ID: ", "video_id: ")
 _DATE_FALLBACK_PATTERNS = [
     re.compile(r"Dat(?:a|e)[^0-9]*?(\d{4}[-]?\d{2}[-]?\d{2})", re.IGNORECASE),
     re.compile(r">\s*Dat(?:a|e)[^0-9]*?(\d{4}[-]?\d{2}[-]?\d{2})", re.IGNORECASE)
@@ -824,24 +827,25 @@ def _parse_volume_manifest(file_path_str: str, files_set_set: Set[str], ids_set_
         with open(file_path_str, 'r', encoding='utf-8-sig') as file_descriptor_obj:
             for raw_line_str in file_descriptor_obj:
                 line_clean_str: str = raw_line_str.strip()
-                if line_clean_str.startswith("ARQUIVO: "):
-                    files_set_set.add(line_clean_str.replace("ARQUIVO: ", ""))
-                elif line_clean_str.startswith("file_source: "):
-                    files_set_set.add(line_clean_str.replace("file_source: ", "").strip('"'))
-                elif line_clean_str.startswith("ID: "):
-                    vid_id_str: str = line_clean_str.replace("ID: ", "")
-                    if vid_id_str and vid_id_str != "Sem ID":
-                        is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
-                        is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
-                        if is_youtube or is_vimeo:
-                            ids_set_set.add(vid_id_str)
-                elif line_clean_str.startswith("video_id: "):
-                    vid_id_str: str = line_clean_str.replace("video_id: ", "").strip('"')
-                    if vid_id_str and vid_id_str != "Sem ID":
-                        is_youtube = re.match(r"^[A-Za-z0-9_-]{11}$", vid_id_str)
-                        is_vimeo = re.match(r"^\d{7,12}$", vid_id_str)
-                        if is_youtube or is_vimeo:
-                            ids_set_set.add(vid_id_str)
+                if line_clean_str.startswith(_MANIFEST_PREFIXES):
+                    if line_clean_str.startswith("ARQUIVO: "):
+                        files_set_set.add(line_clean_str[9:])
+                    elif line_clean_str.startswith("file_source: "):
+                        files_set_set.add(line_clean_str[13:].strip('"'))
+                    elif line_clean_str.startswith("ID: "):
+                        vid_id_str: str = line_clean_str[4:]
+                        if vid_id_str and vid_id_str != "Sem ID":
+                            is_youtube = _YT_ID_PATTERN.match(vid_id_str)
+                            is_vimeo = _VIMEO_ID_PATTERN.match(vid_id_str)
+                            if is_youtube or is_vimeo:
+                                ids_set_set.add(vid_id_str)
+                    elif line_clean_str.startswith("video_id: "):
+                        vid_id_str: str = line_clean_str[10:].strip('"')
+                        if vid_id_str and vid_id_str != "Sem ID":
+                            is_youtube = _YT_ID_PATTERN.match(vid_id_str)
+                            is_vimeo = _VIMEO_ID_PATTERN.match(vid_id_str)
+                            if is_youtube or is_vimeo:
+                                ids_set_set.add(vid_id_str)
     except Exception:
         pass
 
