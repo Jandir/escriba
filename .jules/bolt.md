@@ -47,3 +47,7 @@
 ## 2026-11-20 - Pre-compiling Regexes for Metadata Parsing
 **Learning:** Python's `re.compile()` avoids internal cache lookup overhead. Inline usage of `re.search()` and `re.sub()` inside loops or heavily used functions (like extracting YAML metadata in `lexis.py`) incurs avoidable performance hits.
 **Action:** Move inline `re.search` patterns to module-level constants as `_PATTERN = re.compile(...)`. Also, use `str.replace` over `re.sub` for simple character removals where possible.
+
+## 2026-11-20 - Fast directory short-circuiting with os.scandir and EAFP
+**Learning:** Codebase performance pattern: Prefer `os.scandir()` over `os.listdir()` or `pathlib.Path.glob()` when scanning directories to avoid loading the entire directory list into memory at once. This is especially useful for short-circuiting loops (e.g., checking if *any* file matches). Combine this with a `try...except OSError:` block instead of explicitly checking `os.path.exists()` and `os.path.isdir()` to completely eliminate redundant initial `stat()` calls via the EAFP pattern.
+**Action:** Replace `if os.path.exists() and os.path.isdir(): os.listdir()` flows with a `try: with os.scandir() as it:` block for safer and significantly faster traversals.

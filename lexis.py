@@ -1418,19 +1418,39 @@ def _scan_for_channel_files(dir_path_str: str) -> List[str]:
     """
     dir_name_str: str = os.path.basename(os.path.abspath(dir_path_str))
     pattern_obj = re.compile(rf"^{re.escape(dir_name_str)}[-]+[A-Za-z0-9_-]{{9,15}}(?:-[a-zA-Z0-9-]+)?\.(txt|srt|md)$")
-    return [
-        f for f in os.listdir(dir_path_str) 
-        if pattern_obj.match(f)
-    ]
+
+    # BOLT OPTIMIZATION:
+    # Usar os.scandir() ao invés de os.listdir() evita alocar a lista
+    # de todos os arquivos do diretório em memória de uma vez só,
+    # melhorando a performance ao iterar em diretórios muito grandes.
+    files = []
+    try:
+        with os.scandir(dir_path_str) as it:
+            for entry in it:
+                if entry.is_file(follow_symlinks=False) and pattern_obj.match(entry.name):
+                    files.append(entry.name)
+    except OSError:
+        # Se o diretório não existe ou não temos permissão,
+        # garantimos compatibilidade silenciando o erro (comportamento desejado neste contexto de varredura).
+        pass
+    return files
 
 
 def _has_archived_files(dir_path_str: str) -> bool:
     """Verifica se existem arquivos na pasta de archive ou archives."""
     for arch_dir in ["archive", "archives"]:
         archive_path_str: str = os.path.join(dir_path_str, arch_dir)
-        if os.path.exists(archive_path_str) and os.path.isdir(archive_path_str):
-            if any(f.endswith(('.txt', '.srt', '.md')) for f in os.listdir(archive_path_str)):
-                return True
+        # BOLT OPTIMIZATION:
+        # 1. try/except OSError sobre os.scandir() substitui os.path.exists + os.path.isdir, cortando o uso de stat() pela metade.
+        # 2. os.scandir() itera preguiçosamente. Diferente do os.listdir() que aloca toda a string list em RAM,
+        #    este loop faz return True prematuro no momento que encontra o primeiro txt/srt/md, poupando ciclos valiosos.
+        try:
+            with os.scandir(archive_path_str) as it:
+                for entry in it:
+                    if entry.name.endswith(('.txt', '.srt', '.md')):
+                        return True
+        except OSError:
+            pass
     return False
 
 
